@@ -1,4 +1,4 @@
-# Starter folder
+# USA_Election_Prediction
 
 ## Overview
 
