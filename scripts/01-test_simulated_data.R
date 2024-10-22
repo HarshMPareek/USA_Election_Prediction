@@ -1,7 +1,7 @@
 #### Preamble ####
 # Purpose: Tests the structure and validity of the simulated Australian 
   #electoral divisions dataset.
-# Author: Harsh M Pareek, Arshh Relan, Benji Feurence
+# Author: Harsh M Pareek, Arshh Relan, Benji Fleurence
 # Date: 22 October 2024
 # Contact: harsh.pareek@mail.utoronto.ca, b.fleurence@mail.utoronto.ca, relanarshh@gmail.com
 # License: MIT

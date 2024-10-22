@@ -1,6 +1,6 @@
 #### Preamble ####
 # Purpose: Tests... [...UPDATE THIS...]
-# Author: Harsh M Pareek, Arshh Relan, Benji Feurence
+# Author: Harsh M Pareek, Arshh Relan, Benji Fleurence
 # Date: 22 October 2024
 # Contact: harsh.pareek@mail.utoronto.ca, b.fleurence@mail.utoronto.ca, relanarshh@gmail.com
 # License: MIT
@@ -35,12 +35,12 @@ test_that("Dates are in correct format", {
   expect_true(all(class(cleaned_data$election_date) == "Date"), info = "election_date is not Date type")
 })
 
-test_that("Percentage sums to approximately 100 per poll", {
+test_that("Normalized percentages sum to 100 per poll", {
   pct_sums <- cleaned_data %>%
     group_by(poll_id) %>%
-    summarise(total_pct = sum(pct))
-  # Allowing for small rounding errors
-  expect_true(all(abs(pct_sums$total_pct - 100) < 2), info = "Percentages per poll do not sum to approximately 100")
+    summarise(total_pct_normalized = sum(pct_normalized))
+  # Allowing for small rounding errors due to floating point arithmetic
+  expect_true(all(abs(pct_sums$total_pct_normalized - 100) < 1e-6), info = "Normalized percentages per poll do not sum to 100")
 })
 
 cat("All tests passed for cleaned data.\n")

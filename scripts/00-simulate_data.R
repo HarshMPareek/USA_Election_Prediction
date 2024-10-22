@@ -1,7 +1,7 @@
 #### Preamble ####
 # Purpose: Simulates a dataset of Australian electoral divisions, including the 
   #state and party that won each division.
-# Author: Harsh M Pareek, Arshh Relan, Benji Feurence
+# Author: Harsh M Pareek, Arshh Relan, Benji Fleurence
 # Date: 22 October 2024
 # Contact: harsh.pareek@mail.utoronto.ca, b.fleurence@mail.utoronto.ca, relanarshh@gmail.com
 # License: MIT

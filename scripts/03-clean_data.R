@@ -1,6 +1,6 @@
 #### Preamble ####
 # Purpose: Cleans the raw plane data recorded by two observers..... [...UPDATE THIS...]
-# Author: Harsh M Pareek, Arshh Relan, Benji Feurence
+# Author: Harsh M Pareek, Arshh Relan, Benji Fleurence
 # Date: 22 October 2024
 # Contact: harsh.pareek@mail.utoronto.ca, b.fleurence@mail.utoronto.ca, relanarshh@gmail.com
 # License: MIT
@@ -16,6 +16,9 @@ library(readr)
 # Read in the data from CSV
 polling_data <- read_csv("data/01-raw_data/president_polls.csv", show_col_types = FALSE)
 
+# Check initial number of rows
+cat("Initial number of rows:", nrow(polling_data), "\n")
+
 # Filter for general election polls
 polling_data <- polling_data %>%
   filter(
@@ -23,6 +26,9 @@ polling_data <- polling_data %>%
     stage == "general",
     !is.na(pct)
   )
+
+# Check the number of rows after filtering for general election polls
+cat("Rows after filtering for general election polls:", nrow(polling_data), "\n")
 
 #### Candidate Name Cleaning ####
 
@@ -34,7 +40,7 @@ polling_data <- polling_data %>%
       candidate_name %in% c("Joseph R. Biden", "Joe Biden Jr.") ~ "Joe Biden",
       candidate_name %in% c("Kamala D. Harris") ~ "Kamala Harris",
       is.na(candidate_name) ~ "Undecided",
-      candidate_name %in% c("Other", "No Answer", "Refused") ~ "Other",
+      candidate_name %in% c("Other", "No Answer", "Refused", "Undecided") ~ "Other",
       TRUE ~ candidate_name
     )
   )
@@ -50,6 +56,9 @@ polling_data <- polling_data %>%
     !is.na(end_date),
     !is.na(election_date)
   )
+
+# Check the number of rows after handling missing values
+cat("Rows after handling missing values:", nrow(polling_data), "\n")
 
 #### Date Conversion ####
 
@@ -85,19 +94,32 @@ polling_data <- polling_data %>%
 
 #### Handling Polls Where Percentages Don't Sum to 100 ####
 
-# Calculate total percentage per poll
-pct_sums <- polling_data %>%
+# Option: Normalize percentages within each poll
+polling_data <- polling_data %>%
   group_by(poll_id) %>%
-  summarise(total_pct = sum(pct))
+  mutate(
+    total_pct = sum(pct),
+    pct_normalized = (pct / total_pct) * 100
+  ) %>%
+  ungroup()
+
+# Alternatively, relax the sum-to-100% requirement
+# Calculate total percentage per poll
+# pct_sums <- polling_data %>%
+#   group_by(poll_id) %>%
+#   summarise(total_pct = sum(pct))
 
 # Identify polls that sum to approximately 100%
-valid_polls <- pct_sums %>%
-  filter(abs(total_pct - 100) < 2) %>%
-  pull(poll_id)
+# valid_polls <- pct_sums %>%
+#   filter(abs(total_pct - 100) < 10) %>%  # Allowing a 10% deviation
+#   pull(poll_id)
 
 # Filter the data to include only valid polls
-polling_data <- polling_data %>%
-  filter(poll_id %in% valid_polls)
+# polling_data <- polling_data %>%
+#   filter(poll_id %in% valid_polls)
+
+# Check the number of rows after handling total percentages
+cat("Rows after handling total percentages:", nrow(polling_data), "\n")
 
 #### Save Cleaned Data ####
 
