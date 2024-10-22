@@ -1,0 +1,11 @@
+candidate_name,mean_pct,sd_pct,min_pct,max_pct,n_polls
+Donald Trump,49.57648854961832,5.1334993198768,33.3,66.1,131
+Kamala Harris,50.01574074074074,5.620825130451019,33.9,66.6,108
+Joe Biden,49.1772,2.2847492933215534,45.6,55.2,25
+Chase Oliver,0.9,0.14142135623730948,0.8,1,2
+Jill Stein,1.6,0.5656854249492381,1.2,2,2
+Robert F. Kennedy,5.35,0.9192388155425116,4.7,6,2
+Ron DeSantis,47.9,4.384062043356597,44.8,51,2
+Cornel West,1.2,NA,1.2,1.2,1
+Gavin Newsom,49,NA,49,49,1
+Nikki Haley,51,NA,51,51,1
