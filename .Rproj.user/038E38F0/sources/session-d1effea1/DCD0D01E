@@ -1,0 +1,26 @@
+{
+    "id": "DCD0D01E",
+    "path": "~/Library/CloudStorage/OneDrive-UniversityofToronto/STA304/project 2/USA_Election_Prediction/scripts/09-eda_trump_harris_post_aug23.R.R",
+    "project_path": "scripts/09-eda_trump_harris_post_aug23.R.R",
+    "type": "r_source",
+    "hash": "4181871043",
+    "contents": "",
+    "dirty": false,
+    "created": 1729627025247.0,
+    "source_on_save": false,
+    "relative_order": 9,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "36,41",
+        "scrollLine": "22"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1729628063,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1729628063314,
+    "read_only": false,
+    "read_only_alternatives": []
+}
