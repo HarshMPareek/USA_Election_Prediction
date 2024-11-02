@@ -2,7 +2,7 @@
 # Purpose: Tests... [...UPDATE THIS...]
 # Author: Harsh M Pareek, Arshh Relan, Benji Fleurence
 # Date: 22 October 2024
-# Contact: harsh.pareek@mail.utoronto.ca, b.fleurence@mail.utoronto.ca, relanarshh@gmail.com
+# Contact: harsh.pareek@mail.utoronto.ca, b.fleurence@mail.utoronto.ca, arshh.relan@mail.utoronto.ca
 # License: MIT
 # Pre-requisites: [...UPDATE THIS...]
 
