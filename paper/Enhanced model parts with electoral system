@@ -1,0 +1,156 @@
+Data and Model
+1. Data Selection
+To forecast the winner of the upcoming U.S. presidential election, we employed a poll-of-polls methodology, aggregating data from multiple polling sources. This approach, rooted in the works of Blumenthal (2014) and Pasek (2015), leverages the collective insights of various pollsters to enhance predictive accuracy and mitigate individual polling biases.
+
+Primary Data Source:
+
+Polling Data: We utilized a comprehensive dataset of Presidential general election polls from the current election cycle. This data encompasses a range of pollsters, each employing distinct methodologies to gauge voter preferences.
+Rationale for Data Choice:
+
+Representativeness: Poll-of-polls aggregates data from diverse pollsters, ensuring a more representative sample of the electorate compared to relying on a single poll.
+Mitigation of Bias: By averaging across multiple sources, we reduce the impact of any single poll's methodological biases or sampling errors.
+Timeliness: Focusing on the current election cycle ensures that the data reflects the most recent voter sentiments, capturing the dynamic nature of electoral campaigns.
+2. Data Preprocessing
+a. Data Cleaning and Standardization:
+
+Filtering Relevant Polls: We isolated polls specifically targeting the U.S. President during the general election stage, ensuring relevance to the forecasting objective.
+Handling Missing Values: Polls with missing crucial information—such as sample size, methodology, start/end dates, or election dates—were excluded to maintain data integrity.
+Standardizing Candidate Names: To ensure consistency, candidate names were standardized (e.g., consolidating variations like "Donald J. Trump" and "Donald Trump Jr." under "Donald Trump"). This step is vital for accurate aggregation and comparison across polls.
+b. Percentage Normalization:
+
+Ensuring Validity: Polling percentages were verified to lie within the 0-100 range.
+Normalization Within Polls: In cases where the sum of candidate percentages did not equal 100%, we normalized the data to maintain proportional accuracy within each poll.
+c. Temporal Alignment:
+
+Date Conversion: All date-related fields were converted to a standardized Date format to facilitate chronological analyses and calculations.
+Filtering Based on Election Proximity: Polls conducted after the election date or with negative days until election were excluded, ensuring that only relevant polling data was considered.
+d. Geographic Standardization:
+
+State Representation: Polls missing state information were labeled as "National," allowing for a clear distinction between state-specific and national polling data.
+e. Merging with Electoral College Data:
+
+Electoral Votes Integration: We merged the cleaned polling data with a predefined dataset containing the electoral votes per state, based on the 2020 Census. This integration is crucial for translating state-level predictions into the overall electoral outcome.
+3. Modeling Approach
+a. Choice of Model: Generalized Linear Model (Logistic Regression)
+
+Rationale:
+Binary Outcome Suitability: The presidential election outcome is inherently binary—either a candidate wins or loses. Logistic regression is well-suited for modeling such binary outcomes.
+Interpretability: The model provides clear insights into the relationship between predictors (e.g., polling percentages) and the probability of a candidate's victory.
+b. Model Specification:
+
+Outcome Variable:
+winner: A binary variable indicating whether Kamala Harris wins a state (1) or Donald Trump wins (0), based on the aggregated polling data.
+Predictor Variable:
+Kamala Harris Polling Percentage: The normalized polling percentage for Kamala Harris in each state serves as the primary predictor.
+c. Model Construction and Evaluation:
+
+Logistic Regression Model:
+
+r
+Copy code
+glm_model <- glm(winner ~ `Kamala Harris`, data = model_data, family = binomial)
+Interpretation of Coefficients: The model estimates the log-odds of Kamala Harris winning a state based on her polling percentage. A positive coefficient would indicate that higher polling percentages are associated with higher probabilities of winning.
+Model Summary:
+
+The model summary provides statistical insights, including coefficient estimates, standard errors, z-values, and p-values, facilitating the assessment of predictor significance and model fit.
+
+d. Probability Predictions:
+
+Predicted Probabilities:
+
+r
+Copy code
+model_data <- model_data %>%
+  mutate(
+    predicted_prob = predict(glm_model, type = "response"),
+    predicted_winner_model = if_else(predicted_prob > 0.5, "Kamala Harris", "Donald Trump")
+  )
+Thresholding: States where Kamala Harris's predicted probability exceeds 50% are classified as wins for her; otherwise, they are attributed to Donald Trump.
+4. Simulation for Uncertainty Estimation
+To account for the inherent uncertainty in polling data and to provide a probabilistic assessment of election outcomes, we conducted 1,000 simulations of the electoral process.
+
+a. Simulation Methodology:
+
+State-Level Winner Determination:
+Probabilistic Sampling: For each simulation, the winner of each state is randomly determined based on the predicted polling percentages. For instance, if Kamala Harris has a 60% polling percentage in a state, there is a 60% chance she wins that state in the simulation.
+Electoral Votes Aggregation:
+Totaling Votes: After determining the winner for each state in a simulation, electoral votes are aggregated to identify the overall election winner for that iteration.
+b. Simulation Results:
+
+r
+Copy code
+# Simulation Summary Output
+# A tibble: 2 × 2
+  winner        probability
+  <chr>               <dbl>
+1 Kamala Harris        57.3
+2 Donald Trump         42.7
+Interpretation: Across 1,000 simulations, Kamala Harris won approximately 57.3% of the simulations, while Donald Trump won 42.7%. This suggests that, considering polling uncertainties, Kamala Harris has a higher probability of securing the required 270 electoral votes to win the presidency.
+5. Results Interpretation
+a. Generalized Linear Model (GLM) Prediction:
+
+r
+Copy code
+# Predicted Electoral Votes based on GLM:
+# A tibble: 2 × 2
+  predicted_winner_model total_electoral_votes
+  <chr>                                  <dbl>
+1 Donald Trump                             272
+2 Kamala Harris                            264
+Outcome: The GLM predicts Donald Trump as the overall election winner, accumulating 272 electoral votes compared to Kamala Harris's 264.
+
+Rationale Behind Prediction:
+
+Polling Strength: The model indicates that, based solely on Kamala Harris's polling percentages, Donald Trump secures more electoral votes.
+Model Limitations: This deterministic approach does not account for variability or uncertainties inherent in polling data, potentially leading to overconfidence in the predicted outcome.
+b. Simulation Summary:
+
+r
+Copy code
+# Simulation Summary Output
+# A tibble: 2 × 2
+  winner        probability
+  <chr>               <dbl>
+1 Kamala Harris        57.3
+2 Donald Trump         42.7
+Outcome: Simulations reveal that Kamala Harris has a 57.3% probability of winning the election, while Donald Trump has a 42.7% probability.
+
+Interpretation of Simulation Results:
+
+Uncertainty Incorporation: Simulations account for the stochastic nature of polling data, providing a range of possible election outcomes rather than a single-point prediction.
+Probabilistic Insight: The higher probability for Kamala Harris suggests that, despite the GLM's deterministic prediction, the aggregated polling data and its inherent uncertainties favor her victory.
+Robustness of Predictions: Simulations offer a more nuanced understanding of the election dynamics, highlighting the potential for shifts in voter behavior that a single model may overlook.
+c. Reconciling GLM and Simulation Results:
+
+Deterministic vs. Probabilistic Approaches:
+GLM: Offers a clear-cut prediction based on current polling percentages but lacks flexibility in accounting for uncertainties.
+Simulations: Provide a probabilistic distribution of outcomes, capturing the variability and uncertainty in polling data.
+Why Discrepancies Arise:
+Data Interpretation: The GLM may overemphasize Kamala Harris's polling strength without considering the probability distribution across states.
+Variability in Polls: Simulations incorporate the chance of Kamala Harris losing specific states despite favorable polling, which the GLM does not account for.
+d. Final Conclusion Based on Results:
+
+While the GLM predicts a narrow victory for Donald Trump, the simulation analysis suggests a higher likelihood of Kamala Harris winning the election. This discrepancy underscores the importance of considering both deterministic models and probabilistic simulations to capture a comprehensive picture of electoral outcomes.
+
+6. Model Validation and Assumptions
+a. Model Assumptions:
+
+Independence of Observations: Each state's polling data is assumed to be independent of others.
+Linearity in the Logit: The relationship between Kamala Harris's polling percentage and the log-odds of winning a state is linear.
+Binary Outcome: The model assumes that only Kamala Harris and Donald Trump are the contenders, excluding third-party candidates.
+b. Validation Techniques:
+
+Cross-Validation: Implementing k-fold cross-validation could assess the model's predictive performance and generalizability.
+Confusion Matrix: Evaluating true positives, true negatives, false positives, and false negatives would provide insights into the model's accuracy.
+ROC Curve and AUC: These metrics would help in understanding the model's ability to discriminate between winners and losers across various threshold levels.
+c. Potential Limitations:
+
+Single Predictor Model: Relying solely on Kamala Harris's polling percentages may omit influential factors such as Donald Trump's polling, economic indicators, or demographic variables.
+Polling Errors: Polls inherently contain margins of error and biases, which, despite normalization, may affect model accuracy.
+Temporal Dynamics: Voter sentiments can shift rapidly, especially close to the election date, which may not be fully captured in the polling data used.
+
+8. Conclusion
+The integration of a Generalized Linear Model (GLM) with comprehensive simulation analysis provides a multifaceted approach to forecasting the U.S. presidential election. While the GLM offers a clear-cut prediction based on current polling data, the simulations introduce a layer of probabilistic insight, capturing the inherent uncertainties and variability in voter behavior. This dual-methodology not only enhances the robustness of the predictions but also offers a more nuanced understanding of potential electoral outcomes.
+
+By meticulously selecting and preprocessing polling data, accurately mapping electoral votes, and employing both deterministic and probabilistic modeling techniques, this analysis lays a solid foundation for informed election forecasting. Future enhancements, including the incorporation of additional predictors and advanced modeling techniques, hold the promise of further refining the accuracy and reliability of the predictions.
+
