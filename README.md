@@ -9,7 +9,7 @@ This repo contains analysis of polling trends in the 2024 US presidential electi
 The repo is structured as:
 
 -   `data' contains 00-simulated_data, 01-raw_data, 02_analysis_data. 
--   `model` contains fitted models. 
+-   `model` contains fitted models including candidate_models, combined_candidate_model, and first_model. 
 -   `other` LLM chat interactions, and sketches.
 -   `paper` contains the files used to generate the paper, including the Quarto document and reference bibliography file, as well as the PDF of the paper. 
 -   `scripts` contains the R scripts used to simulate, download and clean data.
