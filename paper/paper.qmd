@@ -1,15 +1,14 @@
 ---
-title: "My title"
-subtitle: "My subtitle if needed"
+title: "Election Prediction Analysis: Trump vs. Harris"
+subtitle: "Assessing the Probability of Electoral College Outcomes Based on Polling Data"
 author: 
-  - First author
-  - Another author
-thanks: "Code and data are available at: [https://github.com/RohanAlexander/starter_folder](https://github.com/RohanAlexander/starter_folder)."
-date: today
-date-format: long
-abstract: "First sentence. Second sentence. Third sentence. Fourth sentence."
-format: pdf
-number-sections: true
+  - Harsh Pareek
+  - Benji Fleurence
+  - Arshh Relan
+thanks: "Code and data are available at: https://github.com/HarshMPareek/USA_Election_Prediction
+date: "`r Sys.Date()`"
+abstract: "This paper aims to predict the outcome of the 2024 U.S. Presidential Election between Donald Trump and Kamala Harris by analyzing aggregated state-level polling data. Using a linear regression model and Monte Carlo simulations, we estimate the probability of each candidate winning the Electoral College."
+output: pdf_document
 bibliography: references.bib
 ---
 
@@ -25,34 +24,31 @@ library(palmerpenguins)
 
 # Introduction
 
-Overview paragraph
+Over the last few election cycles, pollsters' reputations have taken a hit. In back-to-back general elections, pollsters predicted massive Trump losses, only for President Trump to win in 2016 and narrowly lose in 2020. Pollsters are keen on correcting their previous errors. For political campaigns that have already exceeded $16 billion between the two candidates and an election decided by slim margins, polling is vital to assess where they should use their resources.
 
-Estimand paragraph
+The estimand of our paper consists of the eligible voters in the United States. Our goal is to predict what the electorate will decide, focusing on specific sub-sections in more contested regions. This focus is crucial because of the Electoral College system the U.S. uses instead of a pure popular vote. In this system, when a president wins a state, they receive all of its electoral votes, and each state has a unique number of votes. Consequently, because certain states are more competitive than others, their value in our sample should be weighted higher. For instance, a respondent from Pennsylvania will have a heavier impact on the election outcome than someone from Oklahoma.
 
-Results paragraph
+This paper employs a combination of linear regression modeling and Monte Carlo simulations to analyze aggregated polling data. We aim to provide a comprehensive prediction of the election outcome by considering various factors influencing voter behavior and polling accuracy.
 
-Why it matters paragraph
-
-Telegraphing paragraph: The remainder of this paper is structured as follows. @sec-data....
-
-
-
-
+The remainder of this paper is structured as follows. @sec-data provides a detailed overview of the dataset, including variable descriptions and exploratory data analysis. @sec-model discusses the modeling approach and justifications. @sec-results presents the findings from the analysis, and @sec-discussion interprets these results in the broader political context. Finally, @sec-appendix contains supplementary materials and detailed methodological information.
 
 
 # Data {#sec-data}
 
 ## Overview
 
-We use the statistical programming language R [@citeR].... Our data [@shelter].... Following @tellingstories, we consider...
+We utilize aggregated polling data from multiple sources across all 50 U.S. states and the District of Columbia. The dataset focuses exclusively on polls that include both Donald Trump and Kamala Harris, ensuring consistency and comparability in the analysis. This approach allows us to capture the competitive dynamics between the two candidates across various states with differing electoral weights.
 
-Overview text
+##Broader Context
+
+
+Polling data serves as a critical tool for predicting election outcomes by gauging voter intentions and preferences. By aggregating this data at the state level, we account for regional variations in political landscapes and voter behavior. This granularity is essential for accurately simulating Electoral College outcomes, where state-by-state victories determine the overall election result.
 
 ## Measurement
 	
 Some paragraphs about how we go from a phenomena in the world to an entry in the dataset.
 
-## Outcome variables
+## Veriables explained
 
 Add graphs, tables and text. Use sub-sub-headings for each outcome variable or update the subheading to be singular.
 
@@ -99,37 +95,45 @@ Talk way more about it.
 
 ## Predictor variables
 
-Add graphs, tables and text.
+Days Until Election
+The days_until_election variable measures the number of days remaining until the election date at the time the poll was conducted. This temporal variable helps capture trends and shifts in voter sentiment as the election approaches.
 
-Use sub-sub-headings for each outcome variable and feel free to combine a few into one if they go together naturally.
+Sample Size
+Sample_size indicates the number of respondents in each poll. Larger sample sizes generally provide more reliable estimates of voter preferences and reduce the margin of error.
 
+Methodology
+The methodology variable categorizes the polling method used, such as live phone, online panel, or mixed methods. Different methodologies can introduce varying levels of bias and representativeness in the polling data.
 
-
-
-
-
-
+Population
+Population denotes the demographic segment targeted by the poll, including factors like age, gender, race, education level, and income bracket. This variable ensures that the polling data accurately reflects the diversity of the electorate.
 
 # Model
 
-The goal of our modelling strategy is twofold. Firstly,...
+The goal of our modeling strategy is twofold. Firstly, to quantify the influence of various predictors on polling percentages for each candidate. Secondly, to utilize these insights to simulate Electoral College outcomes through Monte Carlo simulations.
 
-Here we briefly describe the Bayesian analysis model used to investigate... Background details and diagnostics are included in [Appendix -@sec-model-details].
+Here, we briefly describe the linear regression model used to investigate the relationship between polling percentages and predictors such as candidate name, days until election, sample size, methodology, population demographics, and state-specific factors. Detailed model specifications and diagnostics are included in @sec-model-details.
 
 ## Model set-up
 
-Define $y_i$ as the number of seconds that the plane remained aloft. Then $\beta_i$ is the wing width and $\gamma_i$ is the wing length, both measured in millimeters.  
+## Linear Regression Model Specification
 
-\begin{align} 
-y_i|\mu_i, \sigma &\sim \mbox{Normal}(\mu_i, \sigma) \\
-\mu_i &= \alpha + \beta_i + \gamma_i\\
-\alpha &\sim \mbox{Normal}(0, 2.5) \\
-\beta &\sim \mbox{Normal}(0, 2.5) \\
-\gamma &\sim \mbox{Normal}(0, 2.5) \\
-\sigma &\sim \mbox{Exponential}(1)
-\end{align}
+Define \( y_i \) as the normalized polling percentage for candidate \( i \). The linear regression model is specified as follows:
 
-We run the model in R [@citeR] using the `rstanarm` package of @rstanarm. We use the default priors from `rstanarm`.
+\[
+y_i = \beta_0 + \beta_1 \cdot \text{candidate\_name} + \beta_2 \cdot \text{days\_until\_election} + \beta_3 \cdot \text{sample\_size} + \beta_4 \cdot \text{methodology} + \beta_5 \cdot \text{population} + \beta_6 \cdot \text{state} + \epsilon_i
+\]
+
+Where:
+
+- \( \beta_0 \): The intercept.
+- \( \beta_1 \): Captures the effect of being Kamala Harris relative to Donald Trump.
+- \( \beta_2 \): Measures the change in polling percentage per additional day until the election.
+- \( \beta_3 \): Represents the effect of sample size on polling percentage.
+- \( \beta_4 \), \( \beta_5 \), and \( \beta_6 \): Account for variations due to polling methodology, targeted population, and state-specific factors, respectively.
+- \( \epsilon_i \): The error term.
+
+We implement the model using R's `lm()` function, leveraging the `dplyr` and `tidyr` packages for data manipulation. Model diagnostics were conducted to assess assumptions, including residual analysis and variance inflation factors (VIF) to check for multicollinearity.
+
 
 
 ### Model justification
@@ -195,7 +199,24 @@ Weaknesses and next steps should also be included.
 \appendix
 
 # Appendix {-}
-
+Objective: The goal of this survey methodology is to develop a reliable, predictive model for the U.S. presidential election by surveying a representative sample of eligible American voters. This approach considers demographic, geographic, and political factors influencing voting behavior, with a budget of $100,000 to ensure comprehensive reach, quality data collection, and robust analysis.
+Methodology Overview: Utilizing probability sampling techniques, data validation processes, and advanced poll aggregation, this document outlines a strategy designed to yield accurate and generalizable election forecasts.
+ 
+Strategy: We will use stratified random sampling. This method involves dividing the target population into subgroups based on demographics such as age, gender, race, education, income, and geographic region. Random sampling within each subgroup ensures a representative cross-section of voters. We will compliment this with quota sampling to ensure that each demographic group meets sufficient representation, even if probability sampling proves challenging.
+We will stratify based on age, gender, race, ethnicity, education level, household income bracket, geographical region of the USA. This allows for greater forecasting accuracy.
+The ideal sample size would be 10,000 individuals. The analysis will adjust the weightage for each demographic to ensure there is proportional representation in the forecasting.
+ 
+Recruitment Methodology: Targeted ads on social media browsers and emails based on demographics (age, gender, location, political interests). Collaborate with non-profits and civic organizations to improve reach and respondent diversity. Participation in the survey will also be incentivized, participants will have the chance to enter lucky draw competitions that have gift cards as prizes.
+ 
+The survey will be created and distributed using Qualtrics for enhanced security and functionality.
+Questions in the survey will progress in the following broad sections. At first, demographic based questions, secondly questions on political views and intended candidate, lastly verification. Surveys should not take more than 5 minutes to complete.
+ 
+Sample budget allocation:
+Outreach: $80,000
+Incentives: $10,000
+Qualtrics and data analysis software: $10,000
+ 
+A sample survey is attached here.
 
 # Additional data details
 
