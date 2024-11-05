@@ -35531,3 +35531,3797 @@ By meticulously addressing the data filtering issues and ensuring that only vali
 Please run the entire script sequentially. If you encounter any further issues or require additional assistance with specific sections of your script, feel free to reach out!
 
 Happy Analyzing! 🚀
+
+this is my code and I want visaulizations from it for my paper main file/
+# ============================================================
+# 09-eda_trump_harris.R
+# ============================================================
+
+#### Preamble ####
+# Purpose: Exploratory Data Analysis of polls including both Trump and Harris
+#          (All dates, aggregating congressional districts back to states)
+# Author: [Your Name]
+# Date: [Current Date]
+# Contact: [Your Email]
+# License: [Appropriate License]
+
+#### Workspace setup ####
+
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(lubridate)
+library(stringr)
+library(tidyr)
+library(sf)
+library(maps)       # Ensure maps is loaded before purrr
+library(mapdata)
+library(broom)
+library(purrr)
+library(scales)
+library(ggrepel)
+
+# Create directories for plots and outputs if they don't exist
+dir.create("plots", showWarnings = FALSE)
+dir.create("plots/geospatial", showWarnings = FALSE, recursive = TRUE)
+dir.create("plots/eda", showWarnings = FALSE, recursive = TRUE)
+dir.create("plots/slr", showWarnings = FALSE, recursive = TRUE)
+dir.create("plots/simulations", showWarnings = FALSE, recursive = TRUE)
+dir.create("outputs", showWarnings = FALSE, recursive = TRUE)
+
+# Read the cleaned data from CSV
+polling_data <- read_csv("data/02-analysis_data/cleaned_polling_data.csv", show_col_types = FALSE)
+
+#### Data Preparation ####
+
+# Clean candidate names
+polling_data <- polling_data %>%
+  mutate(
+    candidate_name = str_trim(candidate_name),
+    candidate_name = str_to_title(candidate_name)
+  )
+
+# Convert date columns to Date type if not already
+polling_data <- polling_data %>%
+  mutate(
+    start_date = as.Date(start_date),
+    end_date = as.Date(end_date),
+    election_date = as.Date(election_date)
+  )
+
+# Proceed with all dates (Removed the filter for polls after August 23rd)
+polling_data_all_dates <- polling_data
+
+# Filter data to include only Donald Trump and Kamala Harris
+candidates_of_interest <- c("Donald Trump", "Kamala Harris")
+
+polling_data_filtered <- polling_data_all_dates %>%
+  filter(candidate_name %in% candidates_of_interest)
+
+# Aggregate Congressional Districts Back to States
+# Function to map congressional districts to their parent states
+map_cd_to_state <- function(state_name) {
+  # Remove congressional district suffix if present (e.g., " Maine CD-1" -> "Maine")
+  str_replace(state_name, " CD-\\d+", "")
+}
+
+polling_data_aggregated <- polling_data_filtered %>%
+  mutate(
+    state = map_cd_to_state(state)
+  )
+
+# Identify poll_ids where both Trump and Harris are included
+polls_with_both <- polling_data_aggregated %>%
+  group_by(poll_id) %>%
+  filter(all(candidates_of_interest %in% candidate_name)) %>%
+  ungroup() %>%
+  pull(poll_id) %>%
+  unique()
+
+# Check how many polls are included
+num_polls <- length(polls_with_both)
+cat("Number of polls including both Donald Trump and Kamala Harris:", num_polls, "\n")
+
+if (num_polls == 0) {
+  stop("No polls found that include both Donald Trump and Kamala Harris.")
+}
+
+# Filter the polling data to include only these polls
+polling_data_both <- polling_data_aggregated %>%
+  filter(poll_id %in% polls_with_both)
+
+#### Electoral Votes Adjustment ####
+
+# Define the number of electoral votes per state for 2024 based on the 2020 Census
+# Exclude congressional districts as they've been aggregated back to states
+electoral_votes <- tibble(
+  state = c(state.name, "District of Columbia"),
+  electoral_votes = c(
+    9,  # Alabama
+    3,  # Alaska
+    11, # Arizona
+    6,  # Arkansas
+    55, # California
+    10, # Colorado
+    7,  # Connecticut
+    3,  # Delaware
+    3,  # District of Columbia
+    30, # Florida
+    16, # Georgia
+    4,  # Hawaii
+    4,  # Idaho
+    19, # Illinois
+    11, # Indiana
+    6,  # Iowa
+    6,  # Kansas
+    8,  # Kentucky
+    8,  # Louisiana
+    4,  # Maine
+    10, # Maryland
+    11, # Massachusetts
+    15, # Michigan
+    10, # Minnesota
+    6,  # Mississippi
+    10, # Missouri
+    4,  # Montana
+    5,  # Nebraska
+    6,  # Nevada
+    4,  # New Hampshire
+    14, # New Jersey
+    5,  # New Mexico
+    28, # New York
+    16, # North Carolina
+    3,  # North Dakota
+    17, # Ohio
+    7,  # Oklahoma
+    8,  # Oregon
+    19, # Pennsylvania
+    4,  # Rhode Island
+    9,  # South Carolina
+    3,  # South Dakota
+    11, # Tennessee
+    40, # Texas
+    6,  # Utah
+    3,  # Vermont
+    13, # Virginia
+    12, # Washington
+    4,  # West Virginia
+    10, # Wisconsin
+    3   # Wyoming
+  )
+)
+
+# Merge polling data with electoral votes
+state_poll_evs <- polling_data_both %>%
+  left_join(electoral_votes, by = "state")
+
+# Verify all states have electoral votes
+missing_evs <- state_poll_evs %>%
+  filter(is.na(electoral_votes)) %>%
+  pull(state) %>%
+  unique()
+
+if(length(missing_evs) > 0){
+  cat("States with missing electoral votes:\n")
+  print(missing_evs)
+  # Exclude these states from further analysis
+  state_poll_evs <- state_poll_evs %>%
+    filter(!state %in% missing_evs)
+} else {
+  cat("All states have corresponding electoral votes.\n")
+}
+
+#### Analysis ####
+
+# Calculate summary statistics for each candidate in polls where both are present
+summary_stats <- polling_data_both %>%
+  group_by(candidate_name) %>%
+  summarise(
+    mean_pct = mean(pct_normalized, na.rm = TRUE),
+    sd_pct = sd(pct_normalized, na.rm = TRUE),
+    min_pct = min(pct_normalized, na.rm = TRUE),
+    max_pct = max(pct_normalized, na.rm = TRUE),
+    n_polls = n_distinct(poll_id)
+  )
+
+print("Summary statistics for Donald Trump and Kamala Harris in polls where both are included:")
+print(summary_stats)
+
+#### Visualization ####
+
+# Distribution of polling percentages
+distribution_plot <- ggplot(polling_data_both, aes(x = pct_normalized, fill = candidate_name)) +
+  geom_histogram(binwidth = 2, position = "identity", alpha = 0.6) +
+  labs(title = "Distribution of Poll Percentages for Trump and Harris",
+       x = "Polling Percentage",
+       y = "Count",
+       fill = "Candidate") +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+# Save distribution plot
+ggsave("plots/eda/trump_harris_poll_distribution.png", distribution_plot, width = 8, height = 6)
+
+# Time series plot of polling percentages over time
+time_series_plot <- ggplot(polling_data_both, aes(x = end_date, y = pct_normalized, color = candidate_name)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", se = FALSE) +
+  labs(title = "Polling Percentages Over Time for Trump and Harris",
+       x = "Poll End Date",
+       y = "Polling Percentage",
+       color = "Candidate") +
+  theme_minimal()
+
+# Save time series plot
+ggsave("plots/eda/trump_harris_poll_over_time.png", time_series_plot, width = 10, height = 6)
+
+#### Model Building ####
+
+# Prepare the data for modeling
+model_data <- polling_data_both %>%
+  select(poll_id, candidate_name, pct_normalized, days_until_election, sample_size, methodology, population, state, end_date, election_date)
+
+# Calculate 'days_until_election' if not present
+if (!"days_until_election" %in% names(model_data)) {
+  model_data <- model_data %>%
+    mutate(
+      days_until_election = as.numeric(difftime(election_date, end_date, units = "days"))
+    )
+}
+
+# Convert categorical variables to factors
+model_data <- model_data %>%
+  mutate(
+    candidate_name = factor(candidate_name),
+    methodology = factor(methodology),
+    population = factor(population),
+    state = factor(state)
+  )
+
+#### Modeling ####
+
+# Build a linear model predicting polling percentage based on candidate and other predictors
+model <- lm(pct_normalized ~ candidate_name + days_until_election + sample_size + methodology + population + state, data = model_data)
+
+# Summarize the model
+model_summary <- summary(model)
+print(model_summary)
+
+#### Interpretation ####
+
+# Extract coefficients for candidate_name
+coefficients <- model_summary$coefficients
+candidate_effect <- coefficients[grep("candidate_name", rownames(coefficients)), , drop = FALSE]
+
+print("Effect of candidate (reference is Donald Trump):")
+print(candidate_effect)
+
+#### Geospatial Visualization ####
+
+# Load US states shapefile using maps and sf
+# Explicitly specify the namespace to avoid conflicts
+states_map <- sf::st_as_sf(maps::map("state", plot = FALSE, fill = TRUE)) %>%
+  rename(state_lower = ID)
+
+# Prepare polling data for mapping
+# Calculate average polling percentage per state and candidate
+state_poll_avg <- polling_data_both %>%
+  group_by(state, candidate_name) %>%
+  summarise(
+    avg_pct = mean(pct_normalized, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  pivot_wider(names_from = candidate_name, values_from = avg_pct) %>%
+  rename(
+    trump_pct = Donald Trump,
+    harris_pct = Kamala Harris
+  )
+
+# Merge with state map data
+map_data <- states_map %>%
+  mutate(state = str_to_title(str_replace(state_lower, "-", " "))) %>%
+  left_join(state_poll_avg, by = "state")
+
+# Handle any missing states (if any remain after aggregation)
+map_data <- map_data %>%
+  filter(!is.na(trump_pct) & !is.na(harris_pct))
+
+# Create a predicted winner column
+map_data <- map_data %>%
+  mutate(
+    predicted_winner = case_when(
+      harris_pct > trump_pct ~ "Kamala Harris",
+      trump_pct > harris_pct ~ "Donald Trump",
+      TRUE ~ "Tie"
+    )
+  )
+
+# Replace "Tie" with random winner to avoid mapping issues
+set.seed(123)  # For reproducibility
+map_data <- map_data %>%
+  rowwise() %>%
+  mutate(
+    predicted_winner = ifelse(predicted_winner == "Tie", 
+                              sample(c("Kamala Harris", "Donald Trump"), 1), 
+                              predicted_winner)
+  ) %>%
+  ungroup()
+
+# Create a choropleth map
+choropleth_map <- ggplot() +
+  geom_sf(data = states_map, fill = "gray90", color = "white") +
+  geom_sf(data = map_data, aes(fill = predicted_winner), color = "black") +
+  scale_fill_manual(values = c("Kamala Harris" = "blue", "Donald Trump" = "red"), 
+                    name = "Predicted Winner") +
+  labs(
+    title = "Predicted State Winners for the 2024 U.S. Presidential Election",
+    subtitle = "Based on Average Polling Percentages",
+    caption = "Data Source: Polling Data",
+    fill = "Winner"
+  ) +
+  theme_minimal()
+
+# Display the choropleth map
+print(choropleth_map)
+
+# Save the choropleth map
+ggsave("plots/geospatial/predicted_state_winners_map.png", choropleth_map, width = 14, height = 8)
+
+#### Monte Carlo Simulations ####
+
+# Objective: Estimate the probability of each candidate winning the Electoral College
+
+# Define Electoral College votes per state (already defined above)
+# Ensure 'electoral_votes' tibble includes only states and DC
+
+# Merge polling data with electoral votes
+state_poll_evs <- state_poll_avg %>%
+  left_join(electoral_votes, by = "state")
+
+# Verify all states have electoral votes
+missing_evs <- state_poll_evs %>%
+  filter(is.na(electoral_votes)) %>%
+  pull(state) %>%
+  unique()
+
+if(length(missing_evs) > 0){
+  cat("States with missing electoral votes:\n")
+  print(missing_evs)
+  # Exclude these states from further analysis
+  state_poll_evs <- state_poll_evs %>%
+    filter(!state %in% missing_evs)
+} else {
+  cat("All states have corresponding electoral votes.\n")
+}
+
+# Number of simulations
+n_simulations <- 1000
+
+# Initialize a dataframe to store simulation results
+simulation_results <- tibble(
+  simulation = integer(),
+  trump_evs = integer(),
+  harris_evs = integer(),
+  winner = character()
+)
+
+# Function to simulate one election
+simulate_one_election <- function(state_data){
+  # Simulate polling percentages with randomness (assuming normal distribution)
+  sim_trump <- rnorm(n = nrow(state_data), mean = state_data$trump_pct, sd = 2)
+  sim_harris <- rnorm(n = nrow(state_data), mean = state_data$harris_pct, sd = 2)
+  
+  # Ensure percentages are within 0-100
+  sim_trump <- pmax(sim_trump, 0)
+  sim_harris <- pmax(sim_harris, 0)
+  
+  # Determine winner in each state
+  state_winners <- ifelse(sim_harris > sim_trump, "Kamala Harris", "Donald Trump")
+  
+  # Handle ties randomly
+  ties <- which(sim_harris == sim_trump)
+  if(length(ties) > 0){
+    state_winners[ties] <- sample(c("Kamala Harris", "Donald Trump"), length(ties), replace = TRUE)
+  }
+  
+  # Sum electoral votes
+  trump_evs <- sum(state_data$electoral_votes[state_winners == "Donald Trump"])
+  harris_evs <- sum(state_data$electoral_votes[state_winners == "Kamala Harris"])
+  
+  # Determine overall winner
+  overall_winner <- ifelse(harris_evs > trump_evs, "Kamala Harris", "Donald Trump")
+  
+  return(tibble(trump_evs = trump_evs, harris_evs = harris_evs, winner = overall_winner))
+}
+
+# Run simulations
+for(i in 1:n_simulations){
+  sim <- simulate_one_election(state_poll_evs)
+  simulation_results <- bind_rows(simulation_results, sim %>% mutate(simulation = i))
+  
+  # Optional: Print progress every 100 simulations
+  if(i %% 100 == 0){
+    cat("Completed", i, "simulations\n")
+  }
+}
+
+# Calculate win probabilities
+win_probabilities <- simulation_results %>%
+  group_by(winner) %>%
+  summarise(
+    probability = (n() / n_simulations) * 100,
+    avg_evs = mean(if_else(winner == "Donald Trump", trump_evs, harris_evs)),
+    median_evs = median(if_else(winner == "Donald Trump", trump_evs, harris_evs)),
+    .groups = 'drop'
+  )
+
+print("Monte Carlo Simulation Results:")
+print(win_probabilities)
+
+# Save simulation results
+write_csv(win_probabilities, "outputs/simulations/win_probabilities.csv")
+
+# Plot win probabilities
+simulation_prob_plot <- ggplot(win_probabilities, aes(x = reorder(winner, probability), y = probability, fill = winner)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(
+    title = "Monte Carlo Simulation: Probability of Winning the Electoral College",
+    x = "Candidate",
+    y = "Win Probability (%)",
+    fill = "Candidate"
+  ) +
+  theme_minimal()
+
+# Save simulation probability plot
+ggsave("plots/simulations/monte_carlo_win_probabilities.png", simulation_prob_plot, width = 10, height = 6)
+
+#### Conclusion ####
+
+cat("Comprehensive election prediction completed successfully.\n")
+cat("Summary Statistics:\n")
+print(summary_stats)
+cat("Model Summary:\n")
+print(model_summary)
+cat("Monte Carlo Simulation Results:\n")
+print(win_probabilities)
+cat("Visualizations are saved in the 'plots' directory.\n")
+
+and paper is 
+---
+title: "Election Prediction Analysis: Trump vs. Harris"
+subtitle: "Assessing the Probability of Electoral College Outcomes Based on Polling Data"
+author: 
+  - Harsh Pareek
+  - Benji Fleurence
+  - Arshh Relan
+thanks: "Code and data are available at: https://github.com/HarshMPareek/USA_Election_Prediction
+date: "r Sys.Date()"
+abstract: "This paper aims to predict the outcome of the 2024 U.S. Presidential Election between Donald Trump and Kamala Harris by analyzing aggregated state-level polling data. Using a linear regression model and Monte Carlo simulations, we estimate the probability of each candidate winning the Electoral College."
+output: pdf_document
+bibliography: references.bib
+---
+
+{r}
+#| include: false
+#| warning: false
+#| message: false
+
+library(tidyverse)
+library(palmerpenguins)
+
+
+
+# Introduction
+
+Over the last few election cycles, pollsters' reputations have taken a hit. In back-to-back general elections, pollsters predicted massive Trump losses, only for President Trump to win in 2016 and narrowly lose in 2020. Pollsters are keen on correcting their previous errors. For political campaigns that have already exceeded $16 billion between the two candidates and an election decided by slim margins, polling is vital to assess where they should use their resources.
+
+The estimand of our paper consists of the eligible voters in the United States. Our goal is to predict what the electorate will decide, focusing on specific sub-sections in more contested regions. This focus is crucial because of the Electoral College system the U.S. uses instead of a pure popular vote. In this system, when a president wins a state, they receive all of its electoral votes, and each state has a unique number of votes. Consequently, because certain states are more competitive than others, their value in our sample should be weighted higher. For instance, a respondent from Pennsylvania will have a heavier impact on the election outcome than someone from Oklahoma.
+
+This paper employs a combination of linear regression modeling and Monte Carlo simulations to analyze aggregated polling data. We aim to provide a comprehensive prediction of the election outcome by considering various factors influencing voter behavior and polling accuracy.
+
+The remainder of this paper is structured as follows. @sec-data provides a detailed overview of the dataset, including variable descriptions and exploratory data analysis. @sec-model discusses the modeling approach and justifications. @sec-results presents the findings from the analysis, and @sec-discussion interprets these results in the broader political context. Finally, @sec-appendix contains supplementary materials and detailed methodological information.
+
+
+# Data {#sec-data}
+
+## Overview
+
+We utilize aggregated polling data from multiple sources across all 50 U.S. states and the District of Columbia. The dataset focuses exclusively on polls that include both Donald Trump and Kamala Harris, ensuring consistency and comparability in the analysis. This approach allows us to capture the competitive dynamics between the two candidates across various states with differing electoral weights.
+
+##Broader Context
+
+
+Polling data serves as a critical tool for predicting election outcomes by gauging voter intentions and preferences. By aggregating this data at the state level, we account for regional variations in political landscapes and voter behavior. This granularity is essential for accurately simulating Electoral College outcomes, where state-by-state victories determine the overall election result.
+
+## Measurement
+	
+Some paragraphs about how we go from a phenomena in the world to an entry in the dataset.
+
+## Veriables explained
+
+Add graphs, tables and text. Use sub-sub-headings for each outcome variable or update the subheading to be singular.
+
+
+
+Some of our data is of penguins (@fig-bills), from @palmerpenguins.
+
+{r}
+#| label: fig-bills
+#| fig-cap: Bills of penguins
+#| echo: false
+
+ggplot(penguins, aes(x = island, fill = species)) +
+  geom_bar(alpha = 0.8) +
+  scale_fill_manual(values = c("darkorange","purple","cyan4"),
+                    guide = "none") +
+  theme_minimal() +
+  facet_wrap(~species, ncol = 1) +
+  coord_flip()
+
+
+Talk more about it.
+
+And also planes (@fig-planes). (You can change the height and width, but don't worry about doing that until you have finished every other aspect of the paper - Quarto will try to make it look nice and the defaults usually work well once you have enough text.)
+
+{r}
+#| label: fig-planes
+#| fig-cap: Relationship between wing length and width
+#| echo: false
+#| warning: false
+#| message: false
+
+analysis_data <- read_csv(here::here("data/02-analysis_data/analysis_data.csv"))
+
+analysis_data |> 
+  ggplot(aes(x = width, y = length)) +
+  geom_point(alpha = 0.8) +
+  theme_minimal() +
+  labs(x = "Wing width (mm)",
+       y = "Wing length (mm)")
+
+
+Talk way more about it. 
+
+## Predictor variables
+
+Days Until Election
+The days_until_election variable measures the number of days remaining until the election date at the time the poll was conducted. This temporal variable helps capture trends and shifts in voter sentiment as the election approaches.
+
+Sample Size
+Sample_size indicates the number of respondents in each poll. Larger sample sizes generally provide more reliable estimates of voter preferences and reduce the margin of error.
+
+Methodology
+The methodology variable categorizes the polling method used, such as live phone, online panel, or mixed methods. Different methodologies can introduce varying levels of bias and representativeness in the polling data.
+
+Population
+Population denotes the demographic segment targeted by the poll, including factors like age, gender, race, education level, and income bracket. This variable ensures that the polling data accurately reflects the diversity of the electorate.
+
+# Model
+
+The goal of our modeling strategy is twofold. Firstly, to quantify the influence of various predictors on polling percentages for each candidate. Secondly, to utilize these insights to simulate Electoral College outcomes through Monte Carlo simulations.
+
+Here, we briefly describe the linear regression model used to investigate the relationship between polling percentages and predictors such as candidate name, days until election, sample size, methodology, population demographics, and state-specific factors. Detailed model specifications and diagnostics are included in @sec-model-details.
+
+## Model set-up
+
+## Linear Regression Model Specification
+
+Define \( y_i \) as the normalized polling percentage for candidate \( i \). The linear regression model is specified as follows:
+
+\[
+y_i = \beta_0 + \beta_1 \cdot \text{candidate\_name} + \beta_2 \cdot \text{days\_until\_election} + \beta_3 \cdot \text{sample\_size} + \beta_4 \cdot \text{methodology} + \beta_5 \cdot \text{population} + \beta_6 \cdot \text{state} + \epsilon_i
+\]
+
+Where:
+
+- \( \beta_0 \): The intercept.
+- \( \beta_1 \): Captures the effect of being Kamala Harris relative to Donald Trump.
+- \( \beta_2 \): Measures the change in polling percentage per additional day until the election.
+- \( \beta_3 \): Represents the effect of sample size on polling percentage.
+- \( \beta_4 \), \( \beta_5 \), and \( \beta_6 \): Account for variations due to polling methodology, targeted population, and state-specific factors, respectively.
+- \( \epsilon_i \): The error term.
+
+We implement the model using R's lm() function, leveraging the dplyr and tidyr packages for data manipulation. Model diagnostics were conducted to assess assumptions, including residual analysis and variance inflation factors (VIF) to check for multicollinearity.
+
+
+
+### Model justification
+
+We expect a positive relationship between the size of the wings and time spent aloft. In particular...
+
+We can use maths by including latex between dollar signs, for instance $\theta$.
+
+
+# Results
+
+Our results are summarized in @tbl-modelresults.
+
+{r}
+#| echo: false
+#| eval: true
+#| warning: false
+#| message: false
+
+library(rstanarm)
+
+first_model <-
+  readRDS(file = here::here("models/first_model.rds"))
+
+
+{r}
+#| echo: false
+#| eval: true
+#| label: tbl-modelresults
+#| tbl-cap: "Explanatory models of flight time based on wing width and wing length"
+#| warning: false
+
+modelsummary::modelsummary(
+  list(
+    "First model" = first_model
+  ),
+  statistic = "mad",
+  fmt = 2
+)
+
+
+
+
+
+# Discussion
+
+## First discussion point {#sec-first-point}
+
+If my paper were 10 pages, then should be be at least 2.5 pages. The discussion is a chance to show off what you know and what you learnt from all this. 
+
+## Second discussion point
+
+Please don't use these as sub-heading labels - change them to be what your point actually is.
+
+## Third discussion point
+
+## Weaknesses and next steps
+
+Weaknesses and next steps should also be included.
+
+\newpage
+
+\appendix
+
+# Appendix {-}
+Objective: The goal of this survey methodology is to develop a reliable, predictive model for the U.S. presidential election by surveying a representative sample of eligible American voters. This approach considers demographic, geographic, and political factors influencing voting behavior, with a budget of $100,000 to ensure comprehensive reach, quality data collection, and robust analysis.
+Methodology Overview: Utilizing probability sampling techniques, data validation processes, and advanced poll aggregation, this document outlines a strategy designed to yield accurate and generalizable election forecasts.
+ 
+Strategy: We will use stratified random sampling. This method involves dividing the target population into subgroups based on demographics such as age, gender, race, education, income, and geographic region. Random sampling within each subgroup ensures a representative cross-section of voters. We will compliment this with quota sampling to ensure that each demographic group meets sufficient representation, even if probability sampling proves challenging.
+We will stratify based on age, gender, race, ethnicity, education level, household income bracket, geographical region of the USA. This allows for greater forecasting accuracy.
+The ideal sample size would be 10,000 individuals. The analysis will adjust the weightage for each demographic to ensure there is proportional representation in the forecasting.
+ 
+Recruitment Methodology: Targeted ads on social media browsers and emails based on demographics (age, gender, location, political interests). Collaborate with non-profits and civic organizations to improve reach and respondent diversity. Participation in the survey will also be incentivized, participants will have the chance to enter lucky draw competitions that have gift cards as prizes.
+ 
+The survey will be created and distributed using Qualtrics for enhanced security and functionality.
+Questions in the survey will progress in the following broad sections. At first, demographic based questions, secondly questions on political views and intended candidate, lastly verification. Surveys should not take more than 5 minutes to complete.
+ 
+Sample budget allocation:
+Outreach: $80,000
+Incentives: $10,000
+Qualtrics and data analysis software: $10,000
+ 
+A sample survey is attached here.
+
+# Additional data details
+
+# Model details {#sec-model-details}
+
+## Posterior predictive check
+
+In @fig-ppcheckandposteriorvsprior-1 we implement a posterior predictive check. This shows...
+
+In @fig-ppcheckandposteriorvsprior-2 we compare the posterior with the prior. This shows... 
+
+{r}
+#| eval: true
+#| echo: false
+#| message: false
+#| warning: false
+#| label: fig-ppcheckandposteriorvsprior
+#| layout-ncol: 2
+#| fig-cap: "Examining how the model fits, and is affected by, the data"
+#| fig-subcap: ["Posterior prediction check", "Comparing the posterior with the prior"]
+
+pp_check(first_model) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+posterior_vs_prior(first_model) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set1") +
+  theme(legend.position = "bottom") +
+  coord_flip()
+
+
+## Diagnostics
+
+@fig-stanareyouokay-1 is a trace plot. It shows... This suggests...
+
+@fig-stanareyouokay-2 is a Rhat plot. It shows... This suggests...
+
+{r}
+#| echo: false
+#| eval: true
+#| message: false
+#| warning: false
+#| label: fig-stanareyouokay
+#| fig-cap: "Checking the convergence of the MCMC algorithm"
+#| fig-subcap: ["Trace plot", "Rhat plot"]
+#| layout-ncol: 2
+
+plot(first_model, "trace")
+
+plot(first_model, "rhat")
+
+
+
+
+\newpage
+
+
+# References
+
+
+
+no palmer penguin in real paper just rump and harris and I am updating, write me codes to imprt data and visualzations for this paper
+ChatGPT
+
+Thought for 7 seconds
+
+Certainly! Below are tailored R code chunks and instructions to help you import your polling data and create the necessary visualizations for your paper. These visualizations will replace the placeholder penguin and plane plots in your current Quarto document.
+
+1. Importing Your Polling Data
+First, ensure that your processed polling data and simulation results are accessible to your Quarto document. Assuming you've saved your processed data in CSV files, you can import them as follows:
+
+{r
+Copy code
+# Load necessary libraries
+library(tidyverse)
+library(sf)
+library(ggplot2)
+library(readr)
+library(lubridate)
+library(scales)
+
+# Import polling data
+polling_data_both <- read_csv("data/02-analysis_data/cleaned_polling_data_both.csv")
+
+# Import state map data (if saved separately)
+state_poll_avg <- read_csv("data/02-analysis_data/state_poll_avg.csv")
+
+# Import Monte Carlo simulation results
+win_probabilities <- read_csv("outputs/simulations/win_probabilities.csv")
+Ensure that the file paths ("data/02-analysis_data/cleaned_polling_data_both.csv", etc.) correctly point to your data files.
+
+2. Distribution of Polling Percentages
+This visualization shows the distribution of polling percentages for Donald Trump and Kamala Harris across all included polls.
+
+{r
+Copy code
+distribution_plot <- ggplot(polling_data_both, aes(x = pct_normalized, fill = candidate_name)) +
+  geom_histogram(binwidth = 2, position = "identity", alpha = 0.6) +
+  labs(title = "Distribution of Poll Percentages for Trump and Harris",
+       x = "Polling Percentage",
+       y = "Count",
+       fill = "Candidate") +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+distribution_plot
+
+
+Alternatively, you can generate the plot directly within the paper as shown above.
+
+3. Time Series of Polling Percentages Over Time
+This plot illustrates how the polling percentages for both candidates have evolved over the polling period.
+
+{r
+Copy code
+time_series_plot <- ggplot(polling_data_both, aes(x = end_date, y = pct_normalized, color = candidate_name)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", se = FALSE) +
+  labs(title = "Polling Percentages Over Time for Trump and Harris",
+       x = "Poll End Date",
+       y = "Polling Percentage",
+       color = "Candidate") +
+  theme_minimal()
+
+time_series_plot
+
+
+4. Choropleth Map of Predicted State Winners
+This map visualizes the predicted winners in each state based on average polling percentages.
+
+{r
+Copy code
+# Load US states shapefile
+states_map <- st_as_sf(maps::map("state", plot = FALSE, fill = TRUE)) %>%
+  rename(state_lower = ID)
+
+# Prepare polling data for mapping
+map_data <- states_map %>%
+  mutate(state = str_to_title(str_replace(state_lower, "-", " "))) %>%
+  left_join(state_poll_avg, by = "state") %>%
+  filter(!is.na(trump_pct) & !is.na(harris_pct)) %>%
+  mutate(
+    predicted_winner = case_when(
+      harris_pct > trump_pct ~ "Kamala Harris",
+      trump_pct > harris_pct ~ "Donald Trump",
+      TRUE ~ "Tie"
+    )
+  ) %>%
+  rowwise() %>%
+  mutate(
+    predicted_winner = ifelse(predicted_winner == "Tie", 
+                              sample(c("Kamala Harris", "Donald Trump"), 1), 
+                              predicted_winner)
+  ) %>%
+  ungroup()
+
+# Create the choropleth map
+choropleth_map <- ggplot() +
+  geom_sf(data = states_map, fill = "gray90", color = "white") +
+  geom_sf(data = map_data, aes(fill = predicted_winner), color = "black") +
+  scale_fill_manual(values = c("Kamala Harris" = "blue", "Donald Trump" = "red"), 
+                    name = "Predicted Winner") +
+  labs(
+    title = "Predicted State Winners for the 2024 U.S. Presidential Election",
+    subtitle = "Based on Average Polling Percentages",
+    caption = "Data Source: Polling Data",
+    fill = "Winner"
+  ) +
+  theme_minimal()
+
+choropleth_map
+
+
+5. Monte Carlo Simulation: Probability of Winning the Electoral College
+This bar chart displays the probability of each candidate winning the Electoral College based on Monte Carlo simulations.
+
+{r
+Copy code
+simulation_prob_plot <- ggplot(win_probabilities, aes(x = reorder(winner, probability), y = probability, fill = winner)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(
+    title = "Monte Carlo Simulation: Probability of Winning the Electoral College",
+    x = "Candidate",
+    y = "Win Probability (%)",
+    fill = "Candidate"
+  ) +
+  theme_minimal()
+
+simulation_prob_plot
+
+
+6. Including Tables and Model Summaries
+To include tables such as summary statistics or model results, you can use the kable function from the knitr package or the modelsummary package for more complex summaries.
+
+Summary Statistics Table
+{r
+Copy code
+summary_stats <- polling_data_both %>%
+  group_by(candidate_name) %>%
+  summarise(
+    mean_pct = mean(pct_normalized, na.rm = TRUE),
+    sd_pct = sd(pct_normalized, na.rm = TRUE),
+    min_pct = min(pct_normalized, na.rm = TRUE),
+    max_pct = max(pct_normalized, na.rm = TRUE),
+    n_polls = n_distinct(poll_id)
+  )
+
+knitr::kable(summary_stats, caption = "Summary Statistics for Donald Trump and Kamala Harris in Polls Including Both Candidates")
+Model Summary Table
+Assuming you've saved your linear model as first_model.rds, you can include the model summary as follows:
+
+{r
+Copy code
+library(rstanarm)
+library(modelsummary)
+
+# Load the linear model
+first_model <- readRDS(file = "models/first_model.rds")
+
+# Display the model summary
+modelsummary::modelsummary(
+  list("Linear Regression Model" = first_model),
+  statistic = "std.error",
+  fmt = 2,
+  title = "Linear Regression Model Predicting Polling Percentages"
+)
+7. Replacing Placeholder Content
+Ensure that you remove or comment out the placeholder penguin and plane plots in your paper. Replace them with the new visualizations as shown above. For example, remove the following sections:
+
+markdown
+Copy code
+Some of our data is of penguins (@fig-bills), from @palmerpenguins.
+
+```{r}
+#| label: fig-bills
+#| fig-cap: Bills of penguins
+#| echo: false
+
+ggplot(penguins, aes(x = island, fill = species)) +
+  geom_bar(alpha = 0.8) +
+  scale_fill_manual(values = c("darkorange","purple","cyan4"),
+                    guide = "none") +
+  theme_minimal() +
+  facet_wrap(~species, ncol = 1) +
+  coord_flip()
+Talk more about it.
+
+And also planes (@fig-planes).
+
+{r}
+Copy code
+#| label: fig-planes
+#| fig-cap: Relationship between wing length and width
+#| echo: false
+#| warning: false
+#| message: false
+
+analysis_data <- read_csv(here::here("data/02-analysis_data/analysis_data.csv"))
+
+analysis_data |> 
+  ggplot(aes(x = width, y = length)) +
+  geom_point(alpha = 0.8) +
+  theme_minimal() +
+  labs(x = "Wing width (mm)",
+       y = "Wing length (mm)")
+Talk way more about it.
+
+sql
+Copy code
+
+Replace them with your actual data visualizations as demonstrated above.
+
+## 8. Finalizing Your Paper
+
+Ensure that all visualizations are referenced appropriately within your text. For example:
+
+> *Figure 1* shows the distribution of polling percentages for both candidates, indicating the range and central tendency of voter support. *Figure 2* illustrates how these percentages have fluctuated over time, providing insight into trends leading up to the election.
+
+Additionally, update any captions, labels, and references to match the new figures and tables.
+
+## 9. Additional Tips
+
+- **Consistency**: Maintain a consistent style for all your plots (e.g., color schemes, themes) to ensure a professional and cohesive appearance.
+  
+- **Reproducibility**: Ensure that all code chunks are reproducible. This means that the data paths are correct and that any required data preprocessing is handled within the paper or accessible via the provided code.
+  
+- **Documentation**: Comment your code adequately to explain each step, which is especially helpful for collaborators or reviewers who may want to understand or replicate your analysis.
+
+- **Figure Placement**: Use Quarto's figure placement options to control where figures appear in your document. For example, you can use `fig-align: center` to center figures.
+
+By following these steps and integrating the provided code chunks, your paper will effectively showcase the visualizations derived from your polling data analysis, enhancing the clarity and impact of your findings.
+
+
+
+
+
+You said:
+import correct names from given code and just useful visualizations for here
+ChatGPT
+
+Thought for 4 seconds
+
+Certainly! Below, I provide tailored R code chunks and instructions to help you import your polling data and create the necessary visualizations for your paper titled "Election Prediction Analysis: Trump vs. Harris." These visualizations will effectively replace the placeholder penguin and plane plots in your current Quarto document, ensuring that your paper focuses solely on the analysis of Donald Trump and Kamala Harris polling data.
+
+1. Importing Your Polling Data
+First, ensure that your processed polling data and simulation results are accessible to your Quarto document. Assuming you've saved your processed data in CSV files, you can import them as follows:
+
+{r
+Copy code
+# Load necessary libraries
+library(tidyverse)
+library(sf)
+library(ggplot2)
+library(readr)
+library(lubridate)
+library(scales)
+
+# Import polling data where both Trump and Harris are included
+polling_data_both <- read_csv("data/02-analysis_data/cleaned_polling_data_both.csv")
+
+# Import aggregated state polling averages
+state_poll_avg <- read_csv("data/02-analysis_data/state_poll_avg.csv")
+
+# Import Monte Carlo simulation results
+win_probabilities <- read_csv("outputs/simulations/win_probabilities.csv")
+
+# Import linear regression model summary (if needed)
+# first_model <- readRDS(file = "models/first_model.rds")
+Note: Ensure that the file paths ("data/02-analysis_data/cleaned_polling_data_both.csv", etc.) correctly point to your data files. Adjust the paths if your directory structure differs.
+
+2. Distribution of Polling Percentages
+This visualization shows the distribution of polling percentages for Donald Trump and Kamala Harris across all included polls.
+
+{r
+Copy code
+distribution_plot <- ggplot(polling_data_both, aes(x = pct_normalized, fill = candidate_name)) +
+  geom_histogram(binwidth = 2, position = "identity", alpha = 0.6) +
+  labs(
+    title = "Distribution of Polling Percentages for Trump and Harris",
+    x = "Polling Percentage",
+    y = "Count",
+    fill = "Candidate"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+distribution_plot
+
+
+Figure 1: Distribution of Polling Percentages for Trump and Harris
+
+3. Time Series of Polling Percentages Over Time
+This plot illustrates how the polling percentages for both candidates have evolved over the polling period.
+
+{r
+Copy code
+time_series_plot <- ggplot(polling_data_both, aes(x = end_date, y = pct_normalized, color = candidate_name)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", se = FALSE) +
+  labs(
+    title = "Polling Percentages Over Time for Trump and Harris",
+    x = "Poll End Date",
+    y = "Polling Percentage",
+    color = "Candidate"
+  ) +
+  theme_minimal()
+
+time_series_plot
+
+
+Figure 2: Polling Percentages Over Time for Trump and Harris
+
+4. Choropleth Map of Predicted State Winners
+This map visualizes the predicted winners in each state based on average polling percentages.
+
+{r
+Copy code
+# Load US states shapefile
+states_map <- st_as_sf(maps::map("state", plot = FALSE, fill = TRUE)) %>%
+  rename(state_lower = ID)
+
+# Prepare polling data for mapping
+map_data <- states_map %>%
+  mutate(state = str_to_title(str_replace(state_lower, "-", " "))) %>%
+  left_join(state_poll_avg, by = "state") %>%
+  filter(!is.na(trump_pct) & !is.na(harris_pct)) %>%
+  mutate(
+    predicted_winner = case_when(
+      harris_pct > trump_pct ~ "Kamala Harris",
+      trump_pct > harris_pct ~ "Donald Trump",
+      TRUE ~ "Tie"
+    )
+  ) %>%
+  rowwise() %>%
+  mutate(
+    predicted_winner = ifelse(predicted_winner == "Tie", 
+                              sample(c("Kamala Harris", "Donald Trump"), 1), 
+                              predicted_winner)
+  ) %>%
+  ungroup()
+
+# Create the choropleth map
+choropleth_map <- ggplot() +
+  geom_sf(data = states_map, fill = "gray90", color = "white") +
+  geom_sf(data = map_data, aes(fill = predicted_winner), color = "black") +
+  scale_fill_manual(values = c("Kamala Harris" = "blue", "Donald Trump" = "red"), 
+                    name = "Predicted Winner") +
+  labs(
+    title = "Predicted State Winners for the 2024 U.S. Presidential Election",
+    subtitle = "Based on Average Polling Percentages",
+    caption = "Data Source: Polling Data",
+    fill = "Winner"
+  ) +
+  theme_minimal()
+
+choropleth_map
+
+
+Figure 3: Predicted State Winners for the 2024 U.S. Presidential Election
+
+5. Monte Carlo Simulation: Probability of Winning the Electoral College
+This bar chart displays the probability of each candidate winning the Electoral College based on Monte Carlo simulations.
+
+{r
+Copy code
+simulation_prob_plot <- ggplot(win_probabilities, aes(x = reorder(winner, probability), y = probability, fill = winner)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(
+    title = "Monte Carlo Simulation: Probability of Winning the Electoral College",
+    x = "Candidate",
+    y = "Win Probability (%)",
+    fill = "Candidate"
+  ) +
+  theme_minimal()
+
+simulation_prob_plot
+
+
+Figure 4: Monte Carlo Simulation: Probability of Winning the Electoral College
+
+6. Including Tables and Model Summaries
+To include tables such as summary statistics or model results, you can use the knitr::kable function or the modelsummary package for more detailed summaries.
+
+Summary Statistics Table
+This table provides summary statistics for Donald Trump and Kamala Harris polling percentages in polls that include both candidates.
+
+{r
+Copy code
+summary_stats <- polling_data_both %>%
+  group_by(candidate_name) %>%
+  summarise(
+    Mean = mean(pct_normalized, na.rm = TRUE),
+    `Standard Deviation` = sd(pct_normalized, na.rm = TRUE),
+    `Minimum` = min(pct_normalized, na.rm = TRUE),
+    `Maximum` = max(pct_normalized, na.rm = TRUE),
+    `Number of Polls` = n_distinct(poll_id),
+    .groups = 'drop'
+  )
+
+knitr::kable(
+  summary_stats,
+  caption = "Summary Statistics for Donald Trump and Kamala Harris in Polls Including Both Candidates",
+  col.names = c("Candidate", "Mean (%)", "Standard Deviation", "Minimum (%)", "Maximum (%)", "Number of Polls")
+)
+Table 1: Summary Statistics for Donald Trump and Kamala Harris in Polls Including Both Candidates
+
+Model Summary Table
+Assuming you've saved your linear regression model as first_model.rds, you can include the model summary as follows:
+
+{r
+Copy code
+library(modelsummary)
+
+# Load the linear model
+first_model <- readRDS(file = "models/first_model.rds")
+
+# Display the model summary
+modelsummary(
+  list("Linear Regression Model" = first_model),
+  statistic = "std.error",
+  fmt = 2,
+  title = "Linear Regression Model Predicting Polling Percentages"
+)
+Table 2: Explanatory Models of Polling Percentages
+
+7. Replacing Placeholder Content
+Ensure that you remove or comment out the placeholder penguin and plane plots in your paper. Replace them with the new visualizations as shown above. For example, remove the following sections from your Quarto document:
+
+markdown
+Copy code
+Some of our data is of penguins (@fig-bills), from @palmerpenguins.
+
+```{r}
+#| label: fig-bills
+#| fig-cap: Bills of penguins
+#| echo: false
+
+ggplot(penguins, aes(x = island, fill = species)) +
+  geom_bar(alpha = 0.8) +
+  scale_fill_manual(values = c("darkorange","purple","cyan4"),
+                    guide = "none") +
+  theme_minimal() +
+  facet_wrap(~species, ncol = 1) +
+  coord_flip()
+Talk more about it.
+
+And also planes (@fig-planes).
+
+{r}
+Copy code
+#| label: fig-planes
+#| fig-cap: Relationship between wing length and width
+#| echo: false
+#| warning: false
+#| message: false
+
+analysis_data <- read_csv(here::here("data/02-analysis_data/analysis_data.csv"))
+
+analysis_data |> 
+  ggplot(aes(x = width, y = length)) +
+  geom_point(alpha = 0.8) +
+  theme_minimal() +
+  labs(x = "Wing width (mm)",
+       y = "Wing length (mm)")
+Talk way more about it.
+
+vbnet
+Copy code
+
+Replace them with your actual data visualizations as demonstrated in sections 2 through 6 above.
+
+## 8. Finalizing Your Paper
+
+Ensure that all visualizations are referenced appropriately within your text. For example:
+
+> *Figure 1* shows the distribution of polling percentages for both candidates, indicating the range and central tendency of voter support. *Figure 2* illustrates how these percentages have fluctuated over time, providing insight into trends leading up to the election. *Figure 3* presents a choropleth map predicting state winners based on average polling data, and *Figure 4* displays the probabilities of each candidate winning the Electoral College as estimated by Monte Carlo simulations.
+
+Additionally, update any captions, labels, and references to match the new figures and tables.
+
+## 9. Additional Tips
+
+- **Consistency:** Maintain a consistent style for all your plots (e.g., color schemes, themes) to ensure a professional and cohesive appearance.
+  
+- **Reproducibility:** Ensure that all code chunks are reproducible. This means that the data paths are correct and that any required data preprocessing is handled within the paper or accessible via the provided code.
+  
+- **Documentation:** Comment your code adequately to explain each step, which is especially helpful for collaborators or reviewers who may want to understand or replicate your analysis.
+  
+- **Figure Placement:** Use Quarto's figure placement options to control where figures appear in your document. For example, you can use `fig-align: center` to center figures.
+
+By following these steps and integrating the provided code chunks, your paper will effectively showcase the visualizations derived from your polling data analysis, enhancing the clarity and impact of your findings.
+
+
+
+
+
+You said:
+model is 
+#### Preamble ####
+# Purpose: Models... [...UPDATE THIS...]
+# Author: Harsh M Pareek, Arshh Relan, Benji Fleurence
+# Date: 22 October 2024
+# Contact: harsh.pareek@mail.utoronto.ca, b.fleurence@mail.utoronto.ca, arshh.relan@mail.utoronto.ca
+# License: MIT
+# Pre-requisites: [...UPDATE THIS...]
+# Any other information needed? [...UPDATE THIS...]
+
+
+#### Workspace setup ####
+library(dplyr)
+library(readr)
+
+# Read the cleaned data from CSV
+polling_data <- read_csv("data/02-analysis_data/cleaned_polling_data.csv", show_col_types = FALSE)
+
+#### Data Preparation ####
+
+# Include all candidates listed
+candidates_to_include <- c("Donald Trump", "Joe Biden", "Kamala Harris", "Robert F. Kennedy",
+                           "Jill Stein", "Cornel West", "Chase Oliver", "Ron DeSantis",
+                           "Nikki Haley", "Gavin Newsom")
+
+polling_data_filtered <- polling_data %>%
+  filter(candidate_name %in% candidates_to_include)
+
+# Create a dataset for modeling
+model_data <- polling_data_filtered %>%
+  select(pct, candidate_name, days_until_election, sample_size, methodology, population, state)
+
+# Convert categorical variables to factors
+model_data <- model_data %>%
+  mutate(
+    candidate_name = factor(candidate_name),
+    methodology = factor(methodology),
+    population = factor(population),
+    state = factor(state)
+  )
+
+#### Recode Factors ####
+
+# Combine rare levels in 'state' into 'Other'
+state_counts <- table(model_data$state)
+rare_states <- names(state_counts[state_counts < 30])  # Adjust threshold as needed
+
+model_data <- model_data %>%
+  mutate(
+    state = if_else(state %in% rare_states, "Other", as.character(state)),
+    state = factor(state)
+  )
+
+# Combine rare levels in 'methodology' into 'Other'
+methodology_counts <- table(model_data$methodology)
+frequent_methodologies <- names(methodology_counts[methodology_counts >= 30])  # Adjust threshold as needed
+
+model_data <- model_data %>%
+  mutate(
+    methodology = if_else(methodology %in% frequent_methodologies, methodology, "Other"),
+    methodology = factor(methodology, levels = c(frequent_methodologies, "Other"))
+  )
+
+# Combine rare levels in 'population' into 'Other'
+population_counts <- table(model_data$population)
+frequent_populations <- names(population_counts[population_counts >= 30])  # Adjust threshold as needed
+
+model_data <- model_data %>%
+  mutate(
+    population = if_else(population %in% frequent_populations, population, "Other"),
+    population = factor(population, levels = c(frequent_populations, "Other"))
+  )
+
+#### Modeling ####
+
+# Build a combined linear regression model for all candidates
+model <- lm(pct ~ candidate_name + days_until_election + sample_size + methodology + population + state, data = model_data)
+
+# Check for rank deficiency
+if (any(is.na(coef(model)))) {
+  warning("Model coefficients contain NA values due to rank deficiency.")
+} else {
+  cat("Model coefficients are estimated without rank deficiency.\n")
+}
+
+# Save the model
+dir.create("models", showWarnings = FALSE)
+saveRDS(model, "models/combined_candidate_model.rds")
+
+and harris trump main for visuals is
+# ============================================================
+# 09-eda_trump_harris.R
+# ============================================================
+
+#### Preamble ####
+# Purpose: Exploratory Data Analysis of polls including both Trump and Harris
+#          (All dates, aggregating congressional districts back to states)
+# Author: [Your Name]
+# Date: [Current Date]
+# Contact: [Your Email]
+# License: [Appropriate License]
+
+#### Workspace setup ####
+
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(lubridate)
+library(stringr)
+library(tidyr)
+library(sf)
+library(maps)       # Ensure maps is loaded before purrr
+library(mapdata)
+library(broom)
+library(purrr)
+library(scales)
+library(ggrepel)
+
+# Create directories for plots and outputs if they don't exist
+dir.create("plots", showWarnings = FALSE)
+dir.create("plots/geospatial", showWarnings = FALSE, recursive = TRUE)
+dir.create("plots/eda", showWarnings = FALSE, recursive = TRUE)
+dir.create("plots/slr", showWarnings = FALSE, recursive = TRUE)
+dir.create("plots/simulations", showWarnings = FALSE, recursive = TRUE)
+dir.create("outputs", showWarnings = FALSE, recursive = TRUE)
+
+# Read the cleaned data from CSV
+polling_data <- read_csv("data/02-analysis_data/cleaned_polling_data.csv", show_col_types = FALSE)
+
+#### Data Preparation ####
+
+# Clean candidate names
+polling_data <- polling_data %>%
+  mutate(
+    candidate_name = str_trim(candidate_name),
+    candidate_name = str_to_title(candidate_name)
+  )
+
+# Convert date columns to Date type if not already
+polling_data <- polling_data %>%
+  mutate(
+    start_date = as.Date(start_date),
+    end_date = as.Date(end_date),
+    election_date = as.Date(election_date)
+  )
+
+# Proceed with all dates (Removed the filter for polls after August 23rd)
+polling_data_all_dates <- polling_data
+
+# Filter data to include only Donald Trump and Kamala Harris
+candidates_of_interest <- c("Donald Trump", "Kamala Harris")
+
+polling_data_filtered <- polling_data_all_dates %>%
+  filter(candidate_name %in% candidates_of_interest)
+
+# Aggregate Congressional Districts Back to States
+# Function to map congressional districts to their parent states
+map_cd_to_state <- function(state_name) {
+  # Remove congressional district suffix if present (e.g., " Maine CD-1" -> "Maine")
+  str_replace(state_name, " CD-\\d+", "")
+}
+
+polling_data_aggregated <- polling_data_filtered %>%
+  mutate(
+    state = map_cd_to_state(state)
+  )
+
+# Identify poll_ids where both Trump and Harris are included
+polls_with_both <- polling_data_aggregated %>%
+  group_by(poll_id) %>%
+  filter(all(candidates_of_interest %in% candidate_name)) %>%
+  ungroup() %>%
+  pull(poll_id) %>%
+  unique()
+
+# Check how many polls are included
+num_polls <- length(polls_with_both)
+cat("Number of polls including both Donald Trump and Kamala Harris:", num_polls, "\n")
+
+if (num_polls == 0) {
+  stop("No polls found that include both Donald Trump and Kamala Harris.")
+}
+
+# Filter the polling data to include only these polls
+polling_data_both <- polling_data_aggregated %>%
+  filter(poll_id %in% polls_with_both)
+
+#### Electoral Votes Adjustment ####
+
+# Define the number of electoral votes per state for 2024 based on the 2020 Census
+# Exclude congressional districts as they've been aggregated back to states
+electoral_votes <- tibble(
+  state = c(state.name, "District of Columbia"),
+  electoral_votes = c(
+    9,  # Alabama
+    3,  # Alaska
+    11, # Arizona
+    6,  # Arkansas
+    55, # California
+    10, # Colorado
+    7,  # Connecticut
+    3,  # Delaware
+    3,  # District of Columbia
+    30, # Florida
+    16, # Georgia
+    4,  # Hawaii
+    4,  # Idaho
+    19, # Illinois
+    11, # Indiana
+    6,  # Iowa
+    6,  # Kansas
+    8,  # Kentucky
+    8,  # Louisiana
+    4,  # Maine
+    10, # Maryland
+    11, # Massachusetts
+    15, # Michigan
+    10, # Minnesota
+    6,  # Mississippi
+    10, # Missouri
+    4,  # Montana
+    5,  # Nebraska
+    6,  # Nevada
+    4,  # New Hampshire
+    14, # New Jersey
+    5,  # New Mexico
+    28, # New York
+    16, # North Carolina
+    3,  # North Dakota
+    17, # Ohio
+    7,  # Oklahoma
+    8,  # Oregon
+    19, # Pennsylvania
+    4,  # Rhode Island
+    9,  # South Carolina
+    3,  # South Dakota
+    11, # Tennessee
+    40, # Texas
+    6,  # Utah
+    3,  # Vermont
+    13, # Virginia
+    12, # Washington
+    4,  # West Virginia
+    10, # Wisconsin
+    3   # Wyoming
+  )
+)
+
+# Merge polling data with electoral votes
+state_poll_evs <- polling_data_both %>%
+  left_join(electoral_votes, by = "state")
+
+# Verify all states have electoral votes
+missing_evs <- state_poll_evs %>%
+  filter(is.na(electoral_votes)) %>%
+  pull(state) %>%
+  unique()
+
+if(length(missing_evs) > 0){
+  cat("States with missing electoral votes:\n")
+  print(missing_evs)
+  # Exclude these states from further analysis
+  state_poll_evs <- state_poll_evs %>%
+    filter(!state %in% missing_evs)
+} else {
+  cat("All states have corresponding electoral votes.\n")
+}
+
+#### Analysis ####
+
+# Calculate summary statistics for each candidate in polls where both are present
+summary_stats <- polling_data_both %>%
+  group_by(candidate_name) %>%
+  summarise(
+    mean_pct = mean(pct_normalized, na.rm = TRUE),
+    sd_pct = sd(pct_normalized, na.rm = TRUE),
+    min_pct = min(pct_normalized, na.rm = TRUE),
+    max_pct = max(pct_normalized, na.rm = TRUE),
+    n_polls = n_distinct(poll_id)
+  )
+
+print("Summary statistics for Donald Trump and Kamala Harris in polls where both are included:")
+print(summary_stats)
+
+#### Visualization ####
+
+# Distribution of polling percentages
+distribution_plot <- ggplot(polling_data_both, aes(x = pct_normalized, fill = candidate_name)) +
+  geom_histogram(binwidth = 2, position = "identity", alpha = 0.6) +
+  labs(title = "Distribution of Poll Percentages for Trump and Harris",
+       x = "Polling Percentage",
+       y = "Count",
+       fill = "Candidate") +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+# Save distribution plot
+ggsave("plots/eda/trump_harris_poll_distribution.png", distribution_plot, width = 8, height = 6)
+
+# Time series plot of polling percentages over time
+time_series_plot <- ggplot(polling_data_both, aes(x = end_date, y = pct_normalized, color = candidate_name)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", se = FALSE) +
+  labs(title = "Polling Percentages Over Time for Trump and Harris",
+       x = "Poll End Date",
+       y = "Polling Percentage",
+       color = "Candidate") +
+  theme_minimal()
+
+# Save time series plot
+ggsave("plots/eda/trump_harris_poll_over_time.png", time_series_plot, width = 10, height = 6)
+
+#### Model Building ####
+
+# Prepare the data for modeling
+model_data <- polling_data_both %>%
+  select(poll_id, candidate_name, pct_normalized, days_until_election, sample_size, methodology, population, state, end_date, election_date)
+
+# Calculate 'days_until_election' if not present
+if (!"days_until_election" %in% names(model_data)) {
+  model_data <- model_data %>%
+    mutate(
+      days_until_election = as.numeric(difftime(election_date, end_date, units = "days"))
+    )
+}
+
+# Convert categorical variables to factors
+model_data <- model_data %>%
+  mutate(
+    candidate_name = factor(candidate_name),
+    methodology = factor(methodology),
+    population = factor(population),
+    state = factor(state)
+  )
+
+#### Modeling ####
+
+# Build a linear model predicting polling percentage based on candidate and other predictors
+model <- lm(pct_normalized ~ candidate_name + days_until_election + sample_size + methodology + population + state, data = model_data)
+
+# Summarize the model
+model_summary <- summary(model)
+print(model_summary)
+
+#### Interpretation ####
+
+# Extract coefficients for candidate_name
+coefficients <- model_summary$coefficients
+candidate_effect <- coefficients[grep("candidate_name", rownames(coefficients)), , drop = FALSE]
+
+print("Effect of candidate (reference is Donald Trump):")
+print(candidate_effect)
+
+#### Geospatial Visualization ####
+
+# Load US states shapefile using maps and sf
+# Explicitly specify the namespace to avoid conflicts
+states_map <- sf::st_as_sf(maps::map("state", plot = FALSE, fill = TRUE)) %>%
+  rename(state_lower = ID)
+
+# Prepare polling data for mapping
+# Calculate average polling percentage per state and candidate
+state_poll_avg <- polling_data_both %>%
+  group_by(state, candidate_name) %>%
+  summarise(
+    avg_pct = mean(pct_normalized, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  pivot_wider(names_from = candidate_name, values_from = avg_pct) %>%
+  rename(
+    trump_pct = Donald Trump,
+    harris_pct = Kamala Harris
+  )
+
+# Merge with state map data
+map_data <- states_map %>%
+  mutate(state = str_to_title(str_replace(state_lower, "-", " "))) %>%
+  left_join(state_poll_avg, by = "state")
+
+# Handle any missing states (if any remain after aggregation)
+map_data <- map_data %>%
+  filter(!is.na(trump_pct) & !is.na(harris_pct))
+
+# Create a predicted winner column
+map_data <- map_data %>%
+  mutate(
+    predicted_winner = case_when(
+      harris_pct > trump_pct ~ "Kamala Harris",
+      trump_pct > harris_pct ~ "Donald Trump",
+      TRUE ~ "Tie"
+    )
+  )
+
+# Replace "Tie" with random winner to avoid mapping issues
+set.seed(123)  # For reproducibility
+map_data <- map_data %>%
+  rowwise() %>%
+  mutate(
+    predicted_winner = ifelse(predicted_winner == "Tie", 
+                              sample(c("Kamala Harris", "Donald Trump"), 1), 
+                              predicted_winner)
+  ) %>%
+  ungroup()
+
+# Create a choropleth map
+choropleth_map <- ggplot() +
+  geom_sf(data = states_map, fill = "gray90", color = "white") +
+  geom_sf(data = map_data, aes(fill = predicted_winner), color = "black") +
+  scale_fill_manual(values = c("Kamala Harris" = "blue", "Donald Trump" = "red"), 
+                    name = "Predicted Winner") +
+  labs(
+    title = "Predicted State Winners for the 2024 U.S. Presidential Election",
+    subtitle = "Based on Average Polling Percentages",
+    caption = "Data Source: Polling Data",
+    fill = "Winner"
+  ) +
+  theme_minimal()
+
+# Display the choropleth map
+print(choropleth_map)
+
+# Save the choropleth map
+ggsave("plots/geospatial/predicted_state_winners_map.png", choropleth_map, width = 14, height = 8)
+
+#### Monte Carlo Simulations ####
+
+# Objective: Estimate the probability of each candidate winning the Electoral College
+
+# Define Electoral College votes per state (already defined above)
+# Ensure 'electoral_votes' tibble includes only states and DC
+
+# Merge polling data with electoral votes
+state_poll_evs <- state_poll_avg %>%
+  left_join(electoral_votes, by = "state")
+
+# Verify all states have electoral votes
+missing_evs <- state_poll_evs %>%
+  filter(is.na(electoral_votes)) %>%
+  pull(state) %>%
+  unique()
+
+if(length(missing_evs) > 0){
+  cat("States with missing electoral votes:\n")
+  print(missing_evs)
+  # Exclude these states from further analysis
+  state_poll_evs <- state_poll_evs %>%
+    filter(!state %in% missing_evs)
+} else {
+  cat("All states have corresponding electoral votes.\n")
+}
+
+# Number of simulations
+n_simulations <- 1000
+
+# Initialize a dataframe to store simulation results
+simulation_results <- tibble(
+  simulation = integer(),
+  trump_evs = integer(),
+  harris_evs = integer(),
+  winner = character()
+)
+
+# Function to simulate one election
+simulate_one_election <- function(state_data){
+  # Simulate polling percentages with randomness (assuming normal distribution)
+  sim_trump <- rnorm(n = nrow(state_data), mean = state_data$trump_pct, sd = 2)
+  sim_harris <- rnorm(n = nrow(state_data), mean = state_data$harris_pct, sd = 2)
+  
+  # Ensure percentages are within 0-100
+  sim_trump <- pmax(sim_trump, 0)
+  sim_harris <- pmax(sim_harris, 0)
+  
+  # Determine winner in each state
+  state_winners <- ifelse(sim_harris > sim_trump, "Kamala Harris", "Donald Trump")
+  
+  # Handle ties randomly
+  ties <- which(sim_harris == sim_trump)
+  if(length(ties) > 0){
+    state_winners[ties] <- sample(c("Kamala Harris", "Donald Trump"), length(ties), replace = TRUE)
+  }
+  
+  # Sum electoral votes
+  trump_evs <- sum(state_data$electoral_votes[state_winners == "Donald Trump"])
+  harris_evs <- sum(state_data$electoral_votes[state_winners == "Kamala Harris"])
+  
+  # Determine overall winner
+  overall_winner <- ifelse(harris_evs > trump_evs, "Kamala Harris", "Donald Trump")
+  
+  return(tibble(trump_evs = trump_evs, harris_evs = harris_evs, winner = overall_winner))
+}
+
+# Run simulations
+for(i in 1:n_simulations){
+  sim <- simulate_one_election(state_poll_evs)
+  simulation_results <- bind_rows(simulation_results, sim %>% mutate(simulation = i))
+  
+  # Optional: Print progress every 100 simulations
+  if(i %% 100 == 0){
+    cat("Completed", i, "simulations\n")
+  }
+}
+
+# Calculate win probabilities
+win_probabilities <- simulation_results %>%
+  group_by(winner) %>%
+  summarise(
+    probability = (n() / n_simulations) * 100,
+    avg_evs = mean(if_else(winner == "Donald Trump", trump_evs, harris_evs)),
+    median_evs = median(if_else(winner == "Donald Trump", trump_evs, harris_evs)),
+    .groups = 'drop'
+  )
+
+print("Monte Carlo Simulation Results:")
+print(win_probabilities)
+
+# Save simulation results
+write_csv(win_probabilities, "outputs/simulations/win_probabilities.csv")
+
+# Plot win probabilities
+simulation_prob_plot <- ggplot(win_probabilities, aes(x = reorder(winner, probability), y = probability, fill = winner)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(
+    title = "Monte Carlo Simulation: Probability of Winning the Electoral College",
+    x = "Candidate",
+    y = "Win Probability (%)",
+    fill = "Candidate"
+  ) +
+  theme_minimal()
+
+# Save simulation probability plot
+ggsave("plots/simulations/monte_carlo_win_probabilities.png", simulation_prob_plot, width = 10, height = 6)
+
+#### Conclusion ####
+
+cat("Comprehensive election prediction completed successfully.\n")
+cat("Summary Statistics:\n")
+print(summary_stats)
+cat("Model Summary:\n")
+print(model_summary)
+cat("Monte Carlo Simulation Results:\n")
+print(win_probabilities)
+cat("Visualizations are saved in the 'plots' directory.\n")
+ChatGPT
+
+Thought for 12 seconds
+
+Certainly! Below is a comprehensive guide to help you integrate your updated modeling and exploratory data analysis (EDA) into your Quarto paper. This guide includes R code chunks tailored to your specific datasets and visualizations focused on Donald Trump and Kamala Harris. Follow these steps to replace the placeholder visualizations with your actual analysis.
+
+1. Importing Your Polling Data and Model
+First, ensure that your processed polling data, aggregated state polling averages, Monte Carlo simulation results, and the combined linear regression model are accessible to your Quarto document. Here's how you can import them:
+
+{r
+Copy code
+# Load necessary libraries
+library(tidyverse)
+library(sf)
+library(ggplot2)
+library(readr)
+library(lubridate)
+library(scales)
+library(modelsummary)
+
+# Import polling data where both Trump and Harris are included
+polling_data_both <- read_csv("data/02-analysis_data/cleaned_polling_data_both.csv")
+
+# Import aggregated state polling averages
+state_poll_avg <- read_csv("data/02-analysis_data/state_poll_avg.csv")
+
+# Import Monte Carlo simulation results
+win_probabilities <- read_csv("outputs/simulations/win_probabilities.csv")
+
+# Import the combined linear regression model
+combined_model <- readRDS("models/combined_candidate_model.rds")
+Note: Ensure that the file paths ("data/02-analysis_data/cleaned_polling_data_both.csv", "data/02-analysis_data/state_poll_avg.csv", "outputs/simulations/win_probabilities.csv", and "models/combined_candidate_model.rds") correctly point to your data and model files. Adjust the paths if your directory structure differs.
+
+2. Distribution of Polling Percentages
+This visualization displays the distribution of polling percentages for Donald Trump and Kamala Harris across all included polls.
+
+{r
+Copy code
+distribution_plot <- ggplot(polling_data_both, aes(x = pct_normalized, fill = candidate_name)) +
+  geom_histogram(binwidth = 2, position = "identity", alpha = 0.6) +
+  labs(
+    title = "Distribution of Polling Percentages for Trump and Harris",
+    x = "Polling Percentage",
+    y = "Count",
+    fill = "Candidate"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+# Display the plot
+print(distribution_plot)
+
+# Save the plot
+ggsave("plots/eda/trump_harris_poll_distribution.png", distribution_plot, width = 8, height = 6)
+
+
+Figure 1: Distribution of Polling Percentages for Trump and Harris
+
+3. Time Series of Polling Percentages Over Time
+This plot illustrates how the polling percentages for both candidates have evolved over the polling period.
+
+{r
+Copy code
+time_series_plot <- ggplot(polling_data_both, aes(x = end_date, y = pct_normalized, color = candidate_name)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", se = FALSE) +
+  labs(
+    title = "Polling Percentages Over Time for Trump and Harris",
+    x = "Poll End Date",
+    y = "Polling Percentage",
+    color = "Candidate"
+  ) +
+  theme_minimal()
+
+# Display the plot
+print(time_series_plot)
+
+# Save the plot
+ggsave("plots/eda/trump_harris_poll_over_time.png", time_series_plot, width = 10, height = 6)
+
+
+Figure 2: Polling Percentages Over Time for Trump and Harris
+
+4. Choropleth Map of Predicted State Winners
+This map visualizes the predicted winners in each state based on average polling percentages.
+
+{r
+Copy code
+# Load US states shapefile
+states_map <- st_as_sf(maps::map("state", plot = FALSE, fill = TRUE)) %>%
+  rename(state_lower = ID)
+
+# Prepare polling data for mapping
+map_data <- states_map %>%
+  mutate(state = str_to_title(str_replace(state_lower, "-", " "))) %>%
+  left_join(state_poll_avg, by = "state") %>%
+  filter(!is.na(trump_pct) & !is.na(harris_pct)) %>%
+  mutate(
+    predicted_winner = case_when(
+      harris_pct > trump_pct ~ "Kamala Harris",
+      trump_pct > harris_pct ~ "Donald Trump",
+      TRUE ~ "Tie"
+    )
+  ) %>%
+  rowwise() %>%
+  mutate(
+    predicted_winner = ifelse(predicted_winner == "Tie", 
+                              sample(c("Kamala Harris", "Donald Trump"), 1), 
+                              predicted_winner)
+  ) %>%
+  ungroup()
+
+# Create the choropleth map
+choropleth_map <- ggplot() +
+  geom_sf(data = states_map, fill = "gray90", color = "white") +
+  geom_sf(data = map_data, aes(fill = predicted_winner), color = "black") +
+  scale_fill_manual(values = c("Kamala Harris" = "blue", "Donald Trump" = "red"), 
+                    name = "Predicted Winner") +
+  labs(
+    title = "Predicted State Winners for the 2024 U.S. Presidential Election",
+    subtitle = "Based on Average Polling Percentages",
+    caption = "Data Source: Polling Data",
+    fill = "Winner"
+  ) +
+  theme_minimal()
+
+# Display the map
+print(choropleth_map)
+
+# Save the map
+ggsave("plots/geospatial/predicted_state_winners_map.png", choropleth_map, width = 14, height = 8)
+
+
+Figure 3: Predicted State Winners for the 2024 U.S. Presidential Election
+
+5. Monte Carlo Simulation: Probability of Winning the Electoral College
+This bar chart displays the probability of each candidate winning the Electoral College based on Monte Carlo simulations.
+
+{r
+Copy code
+simulation_prob_plot <- ggplot(win_probabilities, aes(x = reorder(winner, probability), y = probability, fill = winner)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(
+    title = "Monte Carlo Simulation: Probability of Winning the Electoral College",
+    x = "Candidate",
+    y = "Win Probability (%)",
+    fill = "Candidate"
+  ) +
+  theme_minimal()
+
+# Display the plot
+print(simulation_prob_plot)
+
+# Save the plot
+ggsave("plots/simulations/monte_carlo_win_probabilities.png", simulation_prob_plot, width = 10, height = 6)
+
+
+Figure 4: Monte Carlo Simulation: Probability of Winning the Electoral College
+
+6. Summary Statistics Table
+This table provides summary statistics for Donald Trump and Kamala Harris polling percentages in polls that include both candidates.
+
+{r
+Copy code
+summary_stats <- polling_data_both %>%
+  group_by(candidate_name) %>%
+  summarise(
+    Mean = mean(pct_normalized, na.rm = TRUE),
+    `Standard Deviation` = sd(pct_normalized, na.rm = TRUE),
+    `Minimum` = min(pct_normalized, na.rm = TRUE),
+    `Maximum` = max(pct_normalized, na.rm = TRUE),
+    `Number of Polls` = n_distinct(poll_id),
+    .groups = 'drop'
+  )
+
+knitr::kable(
+  summary_stats,
+  caption = "Summary Statistics for Donald Trump and Kamala Harris in Polls Including Both Candidates",
+  col.names = c("Candidate", "Mean (%)", "Standard Deviation", "Minimum (%)", "Maximum (%)", "Number of Polls")
+)
+Table 1: Summary Statistics for Donald Trump and Kamala Harris in Polls Including Both Candidates
+
+7. Model Summary Table
+This table presents the results from your combined linear regression model predicting polling percentages across multiple candidates.
+
+{r
+Copy code
+# Display the model summary using modelsummary
+modelsummary(
+  list("Combined Candidate Model" = combined_model),
+  statistic = "std.error",
+  fmt = 2,
+  title = "Linear Regression Model Predicting Polling Percentages",
+  gof_omit = "Adj|AIC|BIC|Log.Lik.|F|RMSE"
+)
+Table 2: Explanatory Models of Polling Percentages
+
+Interpretation: This table showcases the influence of various predictors on the polling percentages of the included candidates. Coefficients for candidate_name represent the effect of each candidate relative to the reference category (Donald Trump).
+
+8. Replacing Placeholder Content
+To ensure your paper focuses solely on your analysis of Donald Trump and Kamala Harris, remove or comment out the placeholder penguin and plane plots from your Quarto document. Specifically, delete or comment out the following sections:
+
+markdown
+Copy code
+Some of our data is of penguins (@fig-bills), from @palmerpenguins.
+
+```{r}
+#| label: fig-bills
+#| fig-cap: Bills of penguins
+#| echo: false
+
+ggplot(penguins, aes(x = island, fill = species)) +
+  geom_bar(alpha = 0.8) +
+  scale_fill_manual(values = c("darkorange","purple","cyan4"),
+                    guide = "none") +
+  theme_minimal() +
+  facet_wrap(~species, ncol = 1) +
+  coord_flip()
+Talk more about it.
+
+And also planes (@fig-planes).
+
+{r}
+Copy code
+#| label: fig-planes
+#| fig-cap: Relationship between wing length and width
+#| echo: false
+#| warning: false
+#| message: false
+
+analysis_data <- read_csv(here::here("data/02-analysis_data/analysis_data.csv"))
+
+analysis_data |> 
+  ggplot(aes(x = width, y = length)) +
+  geom_point(alpha = 0.8) +
+  theme_minimal() +
+  labs(x = "Wing width (mm)",
+       y = "Wing length (mm)")
+Talk way more about it.
+
+vbnet
+Copy code
+
+Replace them with the actual visualizations as demonstrated in sections 2 through 6 above.
+
+## 9. Finalizing Your Paper
+
+Ensure that all visualizations and tables are referenced appropriately within your text. For example:
+
+> *Figure 1* shows the distribution of polling percentages for both candidates, indicating the range and central tendency of voter support. *Figure 2* illustrates how these percentages have fluctuated over time, providing insight into trends leading up to the election. *Figure 3* presents a choropleth map predicting state winners based on average polling data, and *Figure 4* displays the probabilities of each candidate winning the Electoral College as estimated by Monte Carlo simulations. *Table 1* summarizes the polling statistics, and *Table 2* details the results from the linear regression model.
+
+Additionally, update any captions, labels, and references to match the new figures and tables.
+
+## 10. Additional Tips
+
+- **Consistency:** Maintain a consistent style for all your plots (e.g., color schemes, themes) to ensure a professional and cohesive appearance.
+  
+- **Reproducibility:** Ensure that all code chunks are reproducible. This means that the data paths are correct and that any required data preprocessing is handled within the paper or accessible via the provided code.
+  
+- **Documentation:** Comment your code adequately to explain each step, which is especially helpful for collaborators or reviewers who may want to understand or replicate your analysis.
+  
+- **Figure Placement:** Use Quarto's figure placement options to control where figures appear in your document. For example, you can use `fig-align: center` to center figures.
+
+- **Model Interpretation:** In your paper's **Model** and **Results** sections, provide a detailed interpretation of the model coefficients, especially focusing on the effects related to Trump and Harris.
+
+- **Appendix Updates:** If you have an appendix for additional model details or diagnostics, ensure it reflects the updated model. Replace any placeholder content related to penguins with relevant model diagnostics for your election prediction model.
+
+By following these steps and integrating the provided code chunks, your paper will effectively showcase the visualizations derived from your polling data analysis and modeling, enhancing the clarity and impact of your findings.
+
+
+
+
+
+You said:
+I have no combined model my data is polling_data <- read_csv("data/02-analysis_data/cleaned_polling_data.csv", show_col_types = FALSE)
+ChatGPT
+
+Thought for 11 seconds
+
+Understood. Let's tailor your Quarto paper to focus exclusively on Donald Trump and Kamala Harris, incorporating your existing cleaned_polling_data.csv without a combined model. Below, you'll find detailed R code chunks and instructions to help you import your data, perform exploratory data analysis (EDA), build a linear regression model, conduct Monte Carlo simulations, and generate the necessary visualizations for your paper.
+
+1. Importing Your Polling Data
+Start by importing your cleaned polling data and loading the necessary libraries. Ensure that your data file path is correct.
+
+{r
+Copy code
+# Load necessary libraries
+library(tidyverse)
+library(sf)
+library(ggplot2)
+library(readr)
+library(lubridate)
+library(scales)
+library(modelsummary)
+
+# Import polling data
+polling_data <- read_csv("data/02-analysis_data/cleaned_polling_data.csv", show_col_types = FALSE)
+2. Data Preparation
+Filter the data to include only Donald Trump and Kamala Harris, clean the candidate names, convert date columns, and aggregate congressional districts back to states.
+
+{r
+Copy code
+# Clean candidate names
+polling_data <- polling_data %>%
+  mutate(
+    candidate_name = str_trim(candidate_name),
+    candidate_name = str_to_title(candidate_name)
+  )
+
+# Convert date columns to Date type if not already
+polling_data <- polling_data %>%
+  mutate(
+    start_date = as.Date(start_date),
+    end_date = as.Date(end_date),
+    election_date = as.Date(election_date)
+  )
+
+# Filter data to include only Donald Trump and Kamala Harris
+candidates_of_interest <- c("Donald Trump", "Kamala Harris")
+
+polling_data_filtered <- polling_data %>%
+  filter(candidate_name %in% candidates_of_interest)
+
+# Aggregate Congressional Districts Back to States
+# Function to map congressional districts to their parent states
+map_cd_to_state <- function(state_name) {
+  # Remove congressional district suffix if present (e.g., "Maine CD-1" -> "Maine")
+  str_replace(state_name, " CD-\\d+", "")
+}
+
+polling_data_aggregated <- polling_data_filtered %>%
+  mutate(
+    state = map_cd_to_state(state)
+  )
+
+# Identify poll_ids where both Trump and Harris are included
+polls_with_both <- polling_data_aggregated %>%
+  group_by(poll_id) %>%
+  filter(all(candidates_of_interest %in% candidate_name)) %>%
+  ungroup() %>%
+  pull(poll_id) %>%
+  unique()
+
+# Check how many polls are included
+num_polls <- length(polls_with_both)
+cat("Number of polls including both Donald Trump and Kamala Harris:", num_polls, "\n")
+
+if (num_polls == 0) {
+  stop("No polls found that include both Donald Trump and Kamala Harris.")
+}
+
+# Filter the polling data to include only these polls
+polling_data_both <- polling_data_aggregated %>%
+  filter(poll_id %in% polls_with_both)
+3. Electoral Votes Adjustment
+Merge your polling data with the number of electoral votes per state.
+
+{r
+Copy code
+# Define the number of electoral votes per state for 2024 based on the 2020 Census
+electoral_votes <- tibble(
+  state = c(state.name, "District of Columbia"),
+  electoral_votes = c(
+    9,  # Alabama
+    3,  # Alaska
+    11, # Arizona
+    6,  # Arkansas
+    55, # California
+    10, # Colorado
+    7,  # Connecticut
+    3,  # Delaware
+    3,  # District of Columbia
+    30, # Florida
+    16, # Georgia
+    4,  # Hawaii
+    4,  # Idaho
+    19, # Illinois
+    11, # Indiana
+    6,  # Iowa
+    6,  # Kansas
+    8,  # Kentucky
+    8,  # Louisiana
+    4,  # Maine
+    10, # Maryland
+    11, # Massachusetts
+    15, # Michigan
+    10, # Minnesota
+    6,  # Mississippi
+    10, # Missouri
+    4,  # Montana
+    5,  # Nebraska
+    6,  # Nevada
+    4,  # New Hampshire
+    14, # New Jersey
+    5,  # New Mexico
+    28, # New York
+    16, # North Carolina
+    3,  # North Dakota
+    17, # Ohio
+    7,  # Oklahoma
+    8,  # Oregon
+    19, # Pennsylvania
+    4,  # Rhode Island
+    9,  # South Carolina
+    3,  # South Dakota
+    11, # Tennessee
+    40, # Texas
+    6,  # Utah
+    3,  # Vermont
+    13, # Virginia
+    12, # Washington
+    4,  # West Virginia
+    10, # Wisconsin
+    3   # Wyoming
+  )
+)
+
+# Merge polling data with electoral votes
+state_poll_evs <- polling_data_both %>%
+  left_join(electoral_votes, by = "state")
+
+# Verify all states have electoral votes
+missing_evs <- state_poll_evs %>%
+  filter(is.na(electoral_votes)) %>%
+  pull(state) %>%
+  unique()
+
+if(length(missing_evs) > 0){
+  cat("States with missing electoral votes:\n")
+  print(missing_evs)
+  # Exclude these states from further analysis
+  state_poll_evs <- state_poll_evs %>%
+    filter(!state %in% missing_evs)
+} else {
+  cat("All states have corresponding electoral votes.\n")
+}
+4. Summary Statistics
+Calculate and display summary statistics for each candidate in polls where both are present.
+
+{r
+Copy code
+summary_stats <- polling_data_both %>%
+  group_by(candidate_name) %>%
+  summarise(
+    Mean = mean(pct_normalized, na.rm = TRUE),
+    `Standard Deviation` = sd(pct_normalized, na.rm = TRUE),
+    `Minimum` = min(pct_normalized, na.rm = TRUE),
+    `Maximum` = max(pct_normalized, na.rm = TRUE),
+    `Number of Polls` = n_distinct(poll_id),
+    .groups = 'drop'
+  )
+
+knitr::kable(
+  summary_stats,
+  caption = "Summary Statistics for Donald Trump and Kamala Harris in Polls Including Both Candidates",
+  col.names = c("Candidate", "Mean (%)", "Standard Deviation", "Minimum (%)", "Maximum (%)", "Number of Polls")
+)
+Table 1: Summary Statistics for Donald Trump and Kamala Harris in Polls Including Both Candidates
+
+5. Distribution of Polling Percentages
+Visualize the distribution of polling percentages for both candidates.
+
+{r
+Copy code
+distribution_plot <- ggplot(polling_data_both, aes(x = pct_normalized, fill = candidate_name)) +
+  geom_histogram(binwidth = 2, position = "identity", alpha = 0.6) +
+  labs(
+    title = "Distribution of Polling Percentages for Trump and Harris",
+    x = "Polling Percentage",
+    y = "Count",
+    fill = "Candidate"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+# Display the plot
+print(distribution_plot)
+
+# Save the plot
+ggsave("plots/eda/trump_harris_poll_distribution.png", distribution_plot, width = 8, height = 6)
+
+
+Figure 1: Distribution of Polling Percentages for Trump and Harris
+
+6. Time Series of Polling Percentages Over Time
+Illustrate how polling percentages have evolved over time.
+
+{r
+Copy code
+time_series_plot <- ggplot(polling_data_both, aes(x = end_date, y = pct_normalized, color = candidate_name)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", se = FALSE) +
+  labs(
+    title = "Polling Percentages Over Time for Trump and Harris",
+    x = "Poll End Date",
+    y = "Polling Percentage",
+    color = "Candidate"
+  ) +
+  theme_minimal()
+
+# Display the plot
+print(time_series_plot)
+
+# Save the plot
+ggsave("plots/eda/trump_harris_poll_over_time.png", time_series_plot, width = 10, height = 6)
+
+
+Figure 2: Polling Percentages Over Time for Trump and Harris
+
+7. Choropleth Map of Predicted State Winners
+Visualize predicted state winners based on average polling percentages.
+
+{r
+Copy code
+# Load US states shapefile
+states_map <- st_as_sf(maps::map("state", plot = FALSE, fill = TRUE)) %>%
+  rename(state_lower = ID)
+
+# Calculate average polling percentage per state and candidate
+state_poll_avg <- polling_data_both %>%
+  group_by(state, candidate_name) %>%
+  summarise(
+    avg_pct = mean(pct_normalized, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  pivot_wider(names_from = candidate_name, values_from = avg_pct) %>%
+  rename(
+    trump_pct = `Donald Trump`,
+    harris_pct = `Kamala Harris`
+  )
+
+# Merge with state map data
+map_data <- states_map %>%
+  mutate(state = str_to_title(str_replace(state_lower, "-", " "))) %>%
+  left_join(state_poll_avg, by = "state")
+
+# Handle any missing states (if any remain after aggregation)
+map_data <- map_data %>%
+  filter(!is.na(trump_pct) & !is.na(harris_pct))
+
+# Create a predicted winner column
+map_data <- map_data %>%
+  mutate(
+    predicted_winner = case_when(
+      harris_pct > trump_pct ~ "Kamala Harris",
+      trump_pct > harris_pct ~ "Donald Trump",
+      TRUE ~ "Tie"
+    )
+  )
+
+# Replace "Tie" with random winner to avoid mapping issues
+set.seed(123)  # For reproducibility
+map_data <- map_data %>%
+  rowwise() %>%
+  mutate(
+    predicted_winner = ifelse(predicted_winner == "Tie", 
+                              sample(c("Kamala Harris", "Donald Trump"), 1), 
+                              predicted_winner)
+  ) %>%
+  ungroup()
+
+# Create the choropleth map
+choropleth_map <- ggplot() +
+  geom_sf(data = states_map, fill = "gray90", color = "white") +
+  geom_sf(data = map_data, aes(fill = predicted_winner), color = "black") +
+  scale_fill_manual(values = c("Kamala Harris" = "blue", "Donald Trump" = "red"), 
+                    name = "Predicted Winner") +
+  labs(
+    title = "Predicted State Winners for the 2024 U.S. Presidential Election",
+    subtitle = "Based on Average Polling Percentages",
+    caption = "Data Source: Polling Data",
+    fill = "Winner"
+  ) +
+  theme_minimal()
+
+# Display the map
+print(choropleth_map)
+
+# Save the map
+ggsave("plots/geospatial/predicted_state_winners_map.png", choropleth_map, width = 14, height = 8)
+
+
+Figure 3: Predicted State Winners for the 2024 U.S. Presidential Election
+
+8. Linear Regression Model
+Build and summarize a linear regression model predicting polling percentages based on various predictors.
+
+{r
+Copy code
+# Prepare the data for modeling
+model_data <- polling_data_both %>%
+  select(poll_id, candidate_name, pct_normalized, days_until_election, sample_size, methodology, population, state, end_date, election_date)
+
+# Calculate 'days_until_election' if not present
+if (!"days_until_election" %in% names(model_data)) {
+  model_data <- model_data %>%
+    mutate(
+      days_until_election = as.numeric(difftime(election_date, end_date, units = "days"))
+    )
+}
+
+# Convert categorical variables to factors
+model_data <- model_data %>%
+  mutate(
+    candidate_name = factor(candidate_name),
+    methodology = factor(methodology),
+    population = factor(population),
+    state = factor(state)
+  )
+
+# Build a linear regression model predicting polling percentage based on candidate and other predictors
+model <- lm(pct_normalized ~ candidate_name + days_until_election + sample_size + methodology + population + state, data = model_data)
+
+# Summarize the model
+model_summary <- summary(model)
+print(model_summary)
+
+# Extract coefficients for candidate_name
+coefficients <- model_summary$coefficients
+candidate_effect <- coefficients[grep("candidate_name", rownames(coefficients)), , drop = FALSE]
+
+print("Effect of candidate (reference is Donald Trump):")
+print(candidate_effect)
+
+# Save the model
+dir.create("models", showWarnings = FALSE)
+saveRDS(model, "models/combined_candidate_model.rds")
+
+# Display the model summary table using modelsummary
+modelsummary(
+  list("Linear Regression Model" = model),
+  statistic = "std.error",
+  fmt = 2,
+  title = "Linear Regression Model Predicting Polling Percentages",
+  gof_omit = "Adj|AIC|BIC|Log.Lik.|F|RMSE"
+)
+Table 2: Explanatory Models of Polling Percentages
+
+Interpretation: This table showcases the influence of various predictors on the polling percentages of Donald Trump and Kamala Harris. Coefficients for candidate_name represent the effect of each candidate relative to the reference category (Donald Trump).
+
+9. Monte Carlo Simulations
+Estimate the probability of each candidate winning the Electoral College through simulations.
+
+{r
+Copy code
+# Define Electoral College votes per state (already defined above)
+
+# Calculate average polling percentages per state for simulation
+state_poll_avg_sim <- polling_data_both %>%
+  group_by(state, candidate_name) %>%
+  summarise(
+    avg_pct = mean(pct_normalized, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  pivot_wider(names_from = candidate_name, values_from = avg_pct) %>%
+  rename(
+    trump_pct = `Donald Trump`,
+    harris_pct = `Kamala Harris`
+  )
+
+# Merge with electoral votes
+state_poll_evs_sim <- state_poll_avg_sim %>%
+  left_join(electoral_votes, by = "state")
+
+# Verify all states have electoral votes
+missing_evs_sim <- state_poll_evs_sim %>%
+  filter(is.na(electoral_votes)) %>%
+  pull(state) %>%
+  unique()
+
+if(length(missing_evs_sim) > 0){
+  cat("States with missing electoral votes:\n")
+  print(missing_evs_sim)
+  # Exclude these states from further analysis
+  state_poll_evs_sim <- state_poll_evs_sim %>%
+    filter(!state %in% missing_evs_sim)
+} else {
+  cat("All states have corresponding electoral votes.\n")
+}
+
+# Number of simulations
+n_simulations <- 1000
+
+# Initialize a dataframe to store simulation results
+simulation_results <- tibble(
+  simulation = integer(),
+  trump_evs = integer(),
+  harris_evs = integer(),
+  winner = character()
+)
+
+# Function to simulate one election
+simulate_one_election <- function(state_data){
+  # Simulate polling percentages with randomness (assuming normal distribution)
+  sim_trump <- rnorm(n = nrow(state_data), mean = state_data$trump_pct, sd = 2)
+  sim_harris <- rnorm(n = nrow(state_data), mean = state_data$harris_pct, sd = 2)
+  
+  # Ensure percentages are within 0-100
+  sim_trump <- pmax(sim_trump, 0)
+  sim_harris <- pmax(sim_harris, 0)
+  
+  # Determine winner in each state
+  state_winners <- ifelse(sim_harris > sim_trump, "Kamala Harris", "Donald Trump")
+  
+  # Handle ties randomly
+  ties <- which(sim_harris == sim_trump)
+  if(length(ties) > 0){
+    state_winners[ties] <- sample(c("Kamala Harris", "Donald Trump"), length(ties), replace = TRUE)
+  }
+  
+  # Sum electoral votes
+  trump_evs <- sum(state_data$electoral_votes[state_winners == "Donald Trump"])
+  harris_evs <- sum(state_data$electoral_votes[state_winners == "Kamala Harris"])
+  
+  # Determine overall winner
+  overall_winner <- ifelse(harris_evs > trump_evs, "Kamala Harris", "Donald Trump")
+  
+  return(tibble(trump_evs = trump_evs, harris_evs = harris_evs, winner = overall_winner))
+}
+
+# Run simulations
+for(i in 1:n_simulations){
+  sim <- simulate_one_election(state_poll_evs_sim)
+  simulation_results <- bind_rows(simulation_results, sim %>% mutate(simulation = i))
+  
+  # Optional: Print progress every 100 simulations
+  if(i %% 100 == 0){
+    cat("Completed", i, "simulations\n")
+  }
+}
+
+# Calculate win probabilities
+win_probabilities <- simulation_results %>%
+  group_by(winner) %>%
+  summarise(
+    probability = (n() / n_simulations) * 100,
+    avg_evs = mean(if_else(winner == "Donald Trump", trump_evs, harris_evs)),
+    median_evs = median(if_else(winner == "Donald Trump", trump_evs, harris_evs)),
+    .groups = 'drop'
+  )
+
+print("Monte Carlo Simulation Results:")
+print(win_probabilities)
+
+# Save simulation results
+dir.create("outputs/simulations", showWarnings = FALSE, recursive = TRUE)
+write_csv(win_probabilities, "outputs/simulations/win_probabilities.csv")
+
+# Plot win probabilities
+simulation_prob_plot <- ggplot(win_probabilities, aes(x = reorder(winner, probability), y = probability, fill = winner)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(
+    title = "Monte Carlo Simulation: Probability of Winning the Electoral College",
+    x = "Candidate",
+    y = "Win Probability (%)",
+    fill = "Candidate"
+  ) +
+  theme_minimal()
+
+# Display the plot
+print(simulation_prob_plot)
+
+# Save simulation probability plot
+ggsave("plots/simulations/monte_carlo_win_probabilities.png", simulation_prob_plot, width = 10, height = 6)
+
+
+Figure 4: Monte Carlo Simulation: Probability of Winning the Electoral College
+
+10. Model Summary Table
+Include a table summarizing your linear regression model.
+
+{r
+Copy code
+# Display the model summary using modelsummary
+modelsummary(
+  list("Linear Regression Model" = model),
+  statistic = "std.error",
+  fmt = 2,
+  title = "Linear Regression Model Predicting Polling Percentages",
+  gof_omit = "Adj|AIC|BIC|Log.Lik.|F|RMSE"
+)
+Table 2: Explanatory Models of Polling Percentages
+
+Interpretation: This table showcases the influence of various predictors on the polling percentages of Donald Trump and Kamala Harris. Coefficients for candidate_name represent the effect of each candidate relative to the reference category (Donald Trump).
+
+11. Finalizing Your Paper
+Replace Placeholder Content
+Ensure that you remove or comment out the placeholder penguin and plane plots in your Quarto document. Replace them with the actual visualizations you've created above. Specifically, remove sections like:
+
+markdown
+Copy code
+Some of our data is of penguins (@fig-bills), from @palmerpenguins.
+
+```{r}
+#| label: fig-bills
+#| fig-cap: Bills of penguins
+#| echo: false
+
+ggplot(penguins, aes(x = island, fill = species)) +
+  geom_bar(alpha = 0.8) +
+  scale_fill_manual(values = c("darkorange","purple","cyan4"),
+                    guide = "none") +
+  theme_minimal() +
+  facet_wrap(~species, ncol = 1) +
+  coord_flip()
+Talk more about it.
+
+And also planes (@fig-planes).
+
+{r}
+Copy code
+#| label: fig-planes
+#| fig-cap: Relationship between wing length and width
+#| echo: false
+#| warning: false
+#| message: false
+
+analysis_data <- read_csv(here::here("data/02-analysis_data/analysis_data.csv"))
+
+analysis_data |> 
+  ggplot(aes(x = width, y = length)) +
+  geom_point(alpha = 0.8) +
+  theme_minimal() +
+  labs(x = "Wing width (mm)",
+       y = "Wing length (mm)")
+Talk way more about it.
+
+sql
+Copy code
+
+Replace them with your actual data visualizations as demonstrated in sections 5 through 10 above.
+
+### Reference Figures and Tables Appropriately
+
+Ensure that all visualizations and tables are referenced within your text. For example:
+
+> *Figure 1* shows the distribution of polling percentages for both candidates, indicating the range and central tendency of voter support. *Figure 2* illustrates how these percentages have fluctuated over time, providing insight into trends leading up to the election. *Figure 3* presents a choropleth map predicting state winners based on average polling data, and *Figure 4* displays the probabilities of each candidate winning the Electoral College as estimated by Monte Carlo simulations. *Table 1* summarizes the polling statistics, and *Table 2* details the results from the linear regression model.
+
+### Update the Introduction and Data Sections
+
+Ensure that the introduction and data sections of your paper align with the focus on Trump and Harris. Remove any references to unrelated analyses or datasets.
+
+---
+
+## 12. Additional Tips
+
+- **Consistency:** Maintain a consistent style across all your plots (e.g., color schemes, themes) to ensure a professional and cohesive appearance.
+
+- **Reproducibility:** Ensure that all code chunks are reproducible. This means verifying that the data paths are correct and that any required data preprocessing is handled within the paper or accessible via the provided code.
+
+- **Documentation:** Comment your code adequately to explain each step, which is especially helpful for collaborators or reviewers who may want to understand or replicate your analysis.
+
+- **Figure Placement:** Use Quarto's figure placement options to control where figures appear in your document. For example, you can use `fig-align: center` to center figures.
+
+- **Model Interpretation:** In your paper's **Model** and **Results** sections, provide a detailed interpretation of the model coefficients, especially focusing on the effects related to Trump and Harris.
+
+- **Appendix Updates:** If you have an appendix for additional model details or diagnostics, ensure it reflects the updated model. Replace any placeholder content related to penguins with relevant model diagnostics for your election prediction model.
+
+- **Automate Plot Saving:** Ensure that plots are saved correctly in their respective directories. Verify the creation of directories and the paths used in `ggsave()` functions.
+
+- **Check for Missing Data:** Regularly check for any missing data after joins or transformations to ensure the integrity of your analysis.
+
+- **Use Reproducible Seeds:** When performing simulations or random assignments (e.g., handling ties in the choropleth map), set a seed for reproducibility using `set.seed()`.
+
+---
+
+By following these steps and integrating the provided R code chunks into your Quarto document, your paper will effectively showcase the visualizations derived from your polling data analysis and modeling. This will enhance the clarity and impact of your findings, providing a robust prediction of the 2024 U.S. Presidential Election between Donald Trump and Kamala Harris.
+
+If you encounter any specific issues or need further customization, feel free to ask!
+
+
+
+
+
+You said:
+I am just doingf paper now and need it for qmd betwen text and have to emove old starter file and add new stuff
+---
+title: "Election Prediction Analysis: Trump vs. Harris"
+subtitle: "Assessing the Probability of Electoral College Outcomes Based on Polling Data"
+author: 
+  - Harsh Pareek
+  - Benji Fleurence
+  - Arshh Relan
+thanks: "Code and data are available at: https://github.com/HarshMPareek/USA_Election_Prediction
+date: "r Sys.Date()"
+abstract: "This paper aims to predict the outcome of the 2024 U.S. Presidential Election between Donald Trump and Kamala Harris by analyzing aggregated state-level polling data. Using a linear regression model and Monte Carlo simulations, we estimate the probability of each candidate winning the Electoral College."
+output: pdf_document
+bibliography: references.bib
+---
+
+{r}
+#| include: false
+#| warning: false
+#| message: false
+
+# Load necessary libraries
+library(tidyverse)
+library(sf)
+library(ggplot2)
+library(readr)
+library(lubridate)
+library(scales)
+
+# Import polling data
+polling_data_both <- read_csv("data/02-analysis_data/cleaned_polling_data.csv")
+
+# Import Monte Carlo simulation results
+win_probabilities <- read_csv("outputs/simulations/win_probabilities.csv")
+
+
+
+# Introduction
+
+Over the last few election cycles, pollsters' reputations have taken a hit. In back-to-back general elections, pollsters predicted massive Trump losses, only for President Trump to win in 2016 and narrowly lose in 2020. Pollsters are keen on correcting their previous errors. For political campaigns that have already exceeded $16 billion between the two candidates and an election decided by slim margins, polling is vital to assess where they should use their resources.
+
+The estimand of our paper consists of the eligible voters in the United States. Our goal is to predict what the electorate will decide, focusing on specific sub-sections in more contested regions. This focus is crucial because of the Electoral College system the U.S. uses instead of a pure popular vote. In this system, when a president wins a state, they receive all of its electoral votes, and each state has a unique number of votes. Consequently, because certain states are more competitive than others, their value in our sample should be weighted higher. For instance, a respondent from Pennsylvania will have a heavier impact on the election outcome than someone from Oklahoma.
+
+This paper employs a combination of linear regression modeling and Monte Carlo simulations to analyze aggregated polling data. We aim to provide a comprehensive prediction of the election outcome by considering various factors influencing voter behavior and polling accuracy.
+
+The remainder of this paper is structured as follows. @sec-data provides a detailed overview of the dataset, including variable descriptions and exploratory data analysis. @sec-model discusses the modeling approach and justifications. @sec-results presents the findings from the analysis, and @sec-discussion interprets these results in the broader political context. Finally, @sec-appendix contains supplementary materials and detailed methodological information.
+
+
+# Data {#sec-data}
+
+## Overview
+
+We utilize aggregated polling data from multiple sources across all 50 U.S. states and the District of Columbia. The dataset focuses exclusively on polls that include both Donald Trump and Kamala Harris, ensuring consistency and comparability in the analysis. This approach allows us to capture the competitive dynamics between the two candidates across various states with differing electoral weights.
+
+##Broader Context
+
+
+Polling data serves as a critical tool for predicting election outcomes by gauging voter intentions and preferences. By aggregating this data at the state level, we account for regional variations in political landscapes and voter behavior. This granularity is essential for accurately simulating Electoral College outcomes, where state-by-state victories determine the overall election result.
+
+## Measurement
+	
+Some paragraphs about how we go from a phenomena in the world to an entry in the dataset.
+
+## Veriables explained
+
+Add graphs, tables and text. Use sub-sub-headings for each outcome variable or update the subheading to be singular.
+
+
+
+Some of our data is of penguins (@fig-bills), from @palmerpenguins.
+
+{r}
+#| label: fig-bills
+#| fig-cap: Bills of penguins
+#| echo: false
+
+ggplot(penguins, aes(x = island, fill = species)) +
+  geom_bar(alpha = 0.8) +
+  scale_fill_manual(values = c("darkorange","purple","cyan4"),
+                    guide = "none") +
+  theme_minimal() +
+  facet_wrap(~species, ncol = 1) +
+  coord_flip()
+
+
+Talk more about it.
+
+And also planes (@fig-planes). (You can change the height and width, but don't worry about doing that until you have finished every other aspect of the paper - Quarto will try to make it look nice and the defaults usually work well once you have enough text.)
+
+{r}
+#| label: fig-planes
+#| fig-cap: Relationship between wing length and width
+#| echo: false
+#| warning: false
+#| message: false
+
+analysis_data <- read_csv(here::here("data/02-analysis_data/analysis_data.csv"))
+
+analysis_data |> 
+  ggplot(aes(x = width, y = length)) +
+  geom_point(alpha = 0.8) +
+  theme_minimal() +
+  labs(x = "Wing width (mm)",
+       y = "Wing length (mm)")
+
+
+Talk way more about it. 
+
+## Predictor variables
+
+Days Until Election
+The days_until_election variable measures the number of days remaining until the election date at the time the poll was conducted. This temporal variable helps capture trends and shifts in voter sentiment as the election approaches.
+
+Sample Size
+Sample_size indicates the number of respondents in each poll. Larger sample sizes generally provide more reliable estimates of voter preferences and reduce the margin of error.
+
+Methodology
+The methodology variable categorizes the polling method used, such as live phone, online panel, or mixed methods. Different methodologies can introduce varying levels of bias and representativeness in the polling data.
+
+Population
+Population denotes the demographic segment targeted by the poll, including factors like age, gender, race, education level, and income bracket. This variable ensures that the polling data accurately reflects the diversity of the electorate.
+
+# Model
+
+The goal of our modeling strategy is twofold. Firstly, to quantify the influence of various predictors on polling percentages for each candidate. Secondly, to utilize these insights to simulate Electoral College outcomes through Monte Carlo simulations.
+
+Here, we briefly describe the linear regression model used to investigate the relationship between polling percentages and predictors such as candidate name, days until election, sample size, methodology, population demographics, and state-specific factors. Detailed model specifications and diagnostics are included in @sec-model-details.
+
+## Model set-up
+
+## Linear Regression Model Specification
+
+Define \( y_i \) as the normalized polling percentage for candidate \( i \). The linear regression model is specified as follows:
+
+\[
+y_i = \beta_0 + \beta_1 \cdot \text{candidate\_name} + \beta_2 \cdot \text{days\_until\_election} + \beta_3 \cdot \text{sample\_size} + \beta_4 \cdot \text{methodology} + \beta_5 \cdot \text{population} + \beta_6 \cdot \text{state} + \epsilon_i
+\]
+
+Where:
+
+- \( \beta_0 \): The intercept.
+- \( \beta_1 \): Captures the effect of being Kamala Harris relative to Donald Trump.
+- \( \beta_2 \): Measures the change in polling percentage per additional day until the election.
+- \( \beta_3 \): Represents the effect of sample size on polling percentage.
+- \( \beta_4 \), \( \beta_5 \), and \( \beta_6 \): Account for variations due to polling methodology, targeted population, and state-specific factors, respectively.
+- \( \epsilon_i \): The error term.
+
+We implement the model using R's lm() function, leveraging the dplyr and tidyr packages for data manipulation. Model diagnostics were conducted to assess assumptions, including residual analysis and variance inflation factors (VIF) to check for multicollinearity.
+
+
+
+### Model justification
+
+We expect a positive relationship between the size of the wings and time spent aloft. In particular...
+
+We can use maths by including latex between dollar signs, for instance $\theta$.
+
+
+# Results
+
+Our results are summarized in @tbl-modelresults.
+
+{r}
+#| echo: false
+#| eval: true
+#| warning: false
+#| message: false
+
+library(rstanarm)
+
+first_model <-
+  readRDS(file = here::here("models/first_model.rds"))
+
+
+{r}
+#| echo: false
+#| eval: true
+#| label: tbl-modelresults
+#| tbl-cap: "Explanatory models of flight time based on wing width and wing length"
+#| warning: false
+
+modelsummary::modelsummary(
+  list(
+    "First model" = first_model
+  ),
+  statistic = "mad",
+  fmt = 2
+)
+
+
+
+
+
+# Discussion
+
+## First discussion point {#sec-first-point}
+
+If my paper were 10 pages, then should be be at least 2.5 pages. The discussion is a chance to show off what you know and what you learnt from all this. 
+
+## Second discussion point
+
+Please don't use these as sub-heading labels - change them to be what your point actually is.
+
+## Third discussion point
+
+## Weaknesses and next steps
+
+Weaknesses and next steps should also be included.
+
+\newpage
+
+\appendix
+
+# Appendix {-}
+Objective: The goal of this survey methodology is to develop a reliable, predictive model for the U.S. presidential election by surveying a representative sample of eligible American voters. This approach considers demographic, geographic, and political factors influencing voting behavior, with a budget of $100,000 to ensure comprehensive reach, quality data collection, and robust analysis.
+Methodology Overview: Utilizing probability sampling techniques, data validation processes, and advanced poll aggregation, this document outlines a strategy designed to yield accurate and generalizable election forecasts.
+ 
+Strategy: We will use stratified random sampling. This method involves dividing the target population into subgroups based on demographics such as age, gender, race, education, income, and geographic region. Random sampling within each subgroup ensures a representative cross-section of voters. We will compliment this with quota sampling to ensure that each demographic group meets sufficient representation, even if probability sampling proves challenging.
+We will stratify based on age, gender, race, ethnicity, education level, household income bracket, geographical region of the USA. This allows for greater forecasting accuracy.
+The ideal sample size would be 10,000 individuals. The analysis will adjust the weightage for each demographic to ensure there is proportional representation in the forecasting.
+ 
+Recruitment Methodology: Targeted ads on social media browsers and emails based on demographics (age, gender, location, political interests). Collaborate with non-profits and civic organizations to improve reach and respondent diversity. Participation in the survey will also be incentivized, participants will have the chance to enter lucky draw competitions that have gift cards as prizes.
+ 
+The survey will be created and distributed using Qualtrics for enhanced security and functionality.
+Questions in the survey will progress in the following broad sections. At first, demographic based questions, secondly questions on political views and intended candidate, lastly verification. Surveys should not take more than 5 minutes to complete.
+ 
+Sample budget allocation:
+Outreach: $80,000
+Incentives: $10,000
+Qualtrics and data analysis software: $10,000
+ 
+A sample survey is attached here.
+
+# Additional data details
+
+# Model details {#sec-model-details}
+
+## Posterior predictive check
+
+In @fig-ppcheckandposteriorvsprior-1 we implement a posterior predictive check. This shows...
+
+In @fig-ppcheckandposteriorvsprior-2 we compare the posterior with the prior. This shows... 
+
+{r}
+#| eval: true
+#| echo: false
+#| message: false
+#| warning: false
+#| label: fig-ppcheckandposteriorvsprior
+#| layout-ncol: 2
+#| fig-cap: "Examining how the model fits, and is affected by, the data"
+#| fig-subcap: ["Posterior prediction check", "Comparing the posterior with the prior"]
+
+pp_check(first_model) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+posterior_vs_prior(first_model) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set1") +
+  theme(legend.position = "bottom") +
+  coord_flip()
+
+
+## Diagnostics
+
+@fig-stanareyouokay-1 is a trace plot. It shows... This suggests...
+
+@fig-stanareyouokay-2 is a Rhat plot. It shows... This suggests...
+
+{r}
+#| echo: false
+#| eval: true
+#| message: false
+#| warning: false
+#| label: fig-stanareyouokay
+#| fig-cap: "Checking the convergence of the MCMC algorithm"
+#| fig-subcap: ["Trace plot", "Rhat plot"]
+#| layout-ncol: 2
+
+plot(first_model, "trace")
+
+plot(first_model, "rhat")
+
+
+
+
+\newpage
+
+
+# References
+
+
+ChatGPT
+
+Thought for 8 seconds
+
+Certainly! Below is a comprehensive guide to updating your Quarto (.qmd) document for your paper titled "Election Prediction Analysis: Trump vs. Harris." This guide will help you remove the placeholder content (penguins and planes) and integrate your actual data visualizations, analysis, and model summaries seamlessly into your paper.
+
+Updated Quarto Document (election_prediction.qmd)
+markdown
+Copy code
+---
+title: "Election Prediction Analysis: Trump vs. Harris"
+subtitle: "Assessing the Probability of Electoral College Outcomes Based on Polling Data"
+author: 
+  - Harsh Pareek
+  - Benji Fleurence
+  - Arshh Relan
+thanks: "Code and data are available at: https://github.com/HarshMPareek/USA_Election_Prediction"
+date: "`r Sys.Date()`"
+abstract: "This paper aims to predict the outcome of the 2024 U.S. Presidential Election between Donald Trump and Kamala Harris by analyzing aggregated state-level polling data. Using a linear regression model and Monte Carlo simulations, we estimate the probability of each candidate winning the Electoral College."
+output: 
+  pdf_document:
+    toc: true
+    toc-depth: 3
+bibliography: references.bib
+---
+
+```{r setup, include=FALSE}
+#| include: false
+#| warning: false
+#| message: false
+
+# Load necessary libraries
+library(tidyverse)
+library(sf)
+library(ggplot2)
+library(readr)
+library(lubridate)
+library(scales)
+library(modelsummary)
+
+# Create directories for plots and outputs if they don't exist
+dir.create("plots/eda", showWarnings = FALSE, recursive = TRUE)
+dir.create("plots/geospatial", showWarnings = FALSE, recursive = TRUE)
+dir.create("plots/simulations", showWarnings = FALSE, recursive = TRUE)
+dir.create("outputs/simulations", showWarnings = FALSE, recursive = TRUE)
+
+# Import polling data
+polling_data <- read_csv("data/02-analysis_data/cleaned_polling_data.csv", show_col_types = FALSE)
+Introduction
+Over the last few election cycles, pollsters' reputations have taken a hit. In back-to-back general elections, pollsters predicted massive Trump losses, only for President Trump to win in 2016 and narrowly lose in 2020. Pollsters are keen on correcting their previous errors. For political campaigns that have already exceeded $16 billion between the two candidates and an election decided by slim margins, polling is vital to assess where they should use their resources.
+
+The estimand of our paper consists of the eligible voters in the United States. Our goal is to predict what the electorate will decide, focusing on specific sub-sections in more contested regions. This focus is crucial because of the Electoral College system the U.S. uses instead of a pure popular vote. In this system, when a president wins a state, they receive all of its electoral votes, and each state has a unique number of votes. Consequently, because certain states are more competitive than others, their value in our sample should be weighted higher. For instance, a respondent from Pennsylvania will have a heavier impact on the election outcome than someone from Oklahoma.
+
+This paper employs a combination of linear regression modeling and Monte Carlo simulations to analyze aggregated polling data. We aim to provide a comprehensive prediction of the election outcome by considering various factors influencing voter behavior and polling accuracy.
+
+The remainder of this paper is structured as follows. @sec-data provides a detailed overview of the dataset, including variable descriptions and exploratory data analysis. @sec-model discusses the modeling approach and justifications. @sec-results presents the findings from the analysis, and @sec-discussion interprets these results in the broader political context. Finally, @sec-appendix contains supplementary materials and detailed methodological information.
+
+Data {#sec-data}
+Overview
+We utilize aggregated polling data from multiple sources across all 50 U.S. states and the District of Columbia. The dataset focuses exclusively on polls that include both Donald Trump and Kamala Harris, ensuring consistency and comparability in the analysis. This approach allows us to capture the competitive dynamics between the two candidates across various states with differing electoral weights.
+
+Broader Context
+Polling data serves as a critical tool for predicting election outcomes by gauging voter intentions and preferences. By aggregating this data at the state level, we account for regional variations in political landscapes and voter behavior. This granularity is essential for accurately simulating Electoral College outcomes, where state-by-state victories determine the overall election result.
+
+Measurement
+Polling percentages are normalized to ensure comparability across different polls. Variables such as days until election, sample size, methodology, population demographics, and state-specific factors are included to account for potential biases and influences on polling data.
+
+Variables Explained
+Polling Percentage Distribution
+Figure 1 shows the distribution of polling percentages for both Donald Trump and Kamala Harris, highlighting the range and central tendency of voter support.
+
+{r
+Copy code
+distribution_plot <- ggplot(polling_data_both, aes(x = pct_normalized, fill = candidate_name)) +
+  geom_histogram(binwidth = 2, position = "identity", alpha = 0.6) +
+  labs(
+    title = "Distribution of Polling Percentages for Trump and Harris",
+    x = "Polling Percentage",
+    y = "Count",
+    fill = "Candidate"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+# Display the plot
+print(distribution_plot)
+
+# Save the plot
+ggsave("plots/eda/trump_harris_poll_distribution.png", distribution_plot, width = 8, height = 6)
+
+
+Polling Percentages Over Time
+Figure 2 illustrates how the polling percentages for both candidates have evolved over the polling period, providing insight into trends leading up to the election.
+
+{r
+Copy code
+time_series_plot <- ggplot(polling_data_both, aes(x = end_date, y = pct_normalized, color = candidate_name)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "loess", se = FALSE) +
+  labs(
+    title = "Polling Percentages Over Time for Trump and Harris",
+    x = "Poll End Date",
+    y = "Polling Percentage",
+    color = "Candidate"
+  ) +
+  theme_minimal()
+
+# Display the plot
+print(time_series_plot)
+
+# Save the plot
+ggsave("plots/eda/trump_harris_poll_over_time.png", time_series_plot, width = 10, height = 6)
+
+
+Electoral Votes by State
+Figure 3 presents a choropleth map predicting state winners based on average polling data, illustrating the geographic distribution of voter support.
+
+{r
+Copy code
+# Load US states shapefile
+states_map <- st_as_sf(maps::map("state", plot = FALSE, fill = TRUE)) %>%
+  rename(state_lower = ID)
+
+# Calculate average polling percentage per state and candidate
+state_poll_avg <- polling_data_both %>%
+  group_by(state, candidate_name) %>%
+  summarise(
+    avg_pct = mean(pct_normalized, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  pivot_wider(names_from = candidate_name, values_from = avg_pct) %>%
+  rename(
+    trump_pct = `Donald Trump`,
+    harris_pct = `Kamala Harris`
+  )
+
+# Merge with state map data
+map_data <- states_map %>%
+  mutate(state = str_to_title(str_replace(state_lower, "-", " "))) %>%
+  left_join(state_poll_avg, by = "state")
+
+# Handle any missing states (if any remain after aggregation)
+map_data <- map_data %>%
+  filter(!is.na(trump_pct) & !is.na(harris_pct))
+
+# Create a predicted winner column
+map_data <- map_data %>%
+  mutate(
+    predicted_winner = case_when(
+      harris_pct > trump_pct ~ "Kamala Harris",
+      trump_pct > harris_pct ~ "Donald Trump",
+      TRUE ~ "Tie"
+    )
+  )
+
+# Replace "Tie" with random winner to avoid mapping issues
+set.seed(123)  # For reproducibility
+map_data <- map_data %>%
+  rowwise() %>%
+  mutate(
+    predicted_winner = ifelse(predicted_winner == "Tie", 
+                              sample(c("Kamala Harris", "Donald Trump"), 1), 
+                              predicted_winner)
+  ) %>%
+  ungroup()
+
+# Create the choropleth map
+choropleth_map <- ggplot() +
+  geom_sf(data = states_map, fill = "gray90", color = "white") +
+  geom_sf(data = map_data, aes(fill = predicted_winner), color = "black") +
+  scale_fill_manual(values = c("Kamala Harris" = "blue", "Donald Trump" = "red"), 
+                    name = "Predicted Winner") +
+  labs(
+    title = "Predicted State Winners for the 2024 U.S. Presidential Election",
+    subtitle = "Based on Average Polling Percentages",
+    caption = "Data Source: Polling Data",
+    fill = "Winner"
+  ) +
+  theme_minimal()
+
+# Display the map
+print(choropleth_map)
+
+# Save the map
+ggsave("plots/geospatial/predicted_state_winners_map.png", choropleth_map, width = 14, height = 8)
+
+
+Monte Carlo Simulation Results
+Figure 4 displays the probabilities of each candidate winning the Electoral College as estimated by Monte Carlo simulations.
+
+{r
+Copy code
+# Number of simulations
+n_simulations <- 1000
+
+# Initialize a dataframe to store simulation results
+simulation_results <- tibble(
+  simulation = integer(),
+  trump_evs = integer(),
+  harris_evs = integer(),
+  winner = character()
+)
+
+# Function to simulate one election
+simulate_one_election <- function(state_data){
+  # Simulate polling percentages with randomness (assuming normal distribution)
+  sim_trump <- rnorm(n = nrow(state_data), mean = state_data$trump_pct, sd = 2)
+  sim_harris <- rnorm(n = nrow(state_data), mean = state_data$harris_pct, sd = 2)
+  
+  # Ensure percentages are within 0-100
+  sim_trump <- pmax(sim_trump, 0)
+  sim_harris <- pmax(sim_harris, 0)
+  
+  # Determine winner in each state
+  state_winners <- ifelse(sim_harris > sim_trump, "Kamala Harris", "Donald Trump")
+  
+  # Handle ties randomly
+  ties <- which(sim_harris == sim_trump)
+  if(length(ties) > 0){
+    state_winners[ties] <- sample(c("Kamala Harris", "Donald Trump"), length(ties), replace = TRUE)
+  }
+  
+  # Sum electoral votes
+  trump_evs <- sum(state_data$electoral_votes[state_winners == "Donald Trump"])
+  harris_evs <- sum(state_data$electoral_votes[state_winners == "Kamala Harris"])
+  
+  # Determine overall winner
+  overall_winner <- ifelse(harris_evs > trump_evs, "Kamala Harris", "Donald Trump")
+  
+  return(tibble(trump_evs = trump_evs, harris_evs = harris_evs, winner = overall_winner))
+}
+
+# Run simulations
+for(i in 1:n_simulations){
+  sim <- simulate_one_election(state_poll_evs_sim)
+  simulation_results <- bind_rows(simulation_results, sim %>% mutate(simulation = i))
+  
+  # Optional: Print progress every 100 simulations
+  if(i %% 100 == 0){
+    cat("Completed", i, "simulations\n")
+  }
+}
+
+# Calculate win probabilities
+win_probabilities <- simulation_results %>%
+  group_by(winner) %>%
+  summarise(
+    probability = (n() / n_simulations) * 100,
+    avg_evs = mean(if_else(winner == "Donald Trump", trump_evs, harris_evs)),
+    median_evs = median(if_else(winner == "Donald Trump", trump_evs, harris_evs)),
+    .groups = 'drop'
+  )
+
+print("Monte Carlo Simulation Results:")
+print(win_probabilities)
+
+# Save simulation results
+write_csv(win_probabilities, "outputs/simulations/win_probabilities.csv")
+
+# Plot win probabilities
+simulation_prob_plot <- ggplot(win_probabilities, aes(x = reorder(winner, probability), y = probability, fill = winner)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(
+    title = "Monte Carlo Simulation: Probability of Winning the Electoral College",
+    x = "Candidate",
+    y = "Win Probability (%)",
+    fill = "Candidate"
+  ) +
+  theme_minimal()
+
+# Display the plot
+print(simulation_prob_plot)
+
+# Save simulation probability plot
+ggsave("plots/simulations/monte_carlo_win_probabilities.png", simulation_prob_plot, width = 10, height = 6)
+
+
+Figure 4: Monte Carlo Simulation: Probability of Winning the Electoral College
+
+Model {#sec-model}
+The goal of our modeling strategy is twofold. Firstly, to quantify the influence of various predictors on polling percentages for each candidate. Secondly, to utilize these insights to simulate Electoral College outcomes through Monte Carlo simulations.
+
+Here, we briefly describe the linear regression model used to investigate the relationship between polling percentages and predictors such as candidate name, days until election, sample size, methodology, population demographics, and state-specific factors. Detailed model specifications and diagnostics are included in @sec-model-details.
+
+Model Set-Up
+We prepare the data by selecting relevant variables and converting categorical variables to factors to be used in the linear regression model.
+
+{r
+Copy code
+# Prepare the data for modeling
+model_data <- polling_data_both %>%
+  select(poll_id, candidate_name, pct_normalized, days_until_election, sample_size, methodology, population, state, end_date, election_date)
+
+# Calculate 'days_until_election' if not present
+if (!"days_until_election" %in% names(model_data)) {
+  model_data <- model_data %>%
+    mutate(
+      days_until_election = as.numeric(difftime(election_date, end_date, units = "days"))
+    )
+}
+
+# Convert categorical variables to factors
+model_data <- model_data %>%
+  mutate(
+    candidate_name = factor(candidate_name),
+    methodology = factor(methodology),
+    population = factor(population),
+    state = factor(state)
+  )
+Linear Regression Model Specification
+Define 
+𝑦
+𝑖
+y 
+i
+​
+  as the normalized polling percentage for candidate 
+𝑖
+i. The linear regression model is specified as follows:
+
+𝑦
+𝑖
+=
+𝛽
+0
++
+𝛽
+1
+⋅
+candidate_name
++
+𝛽
+2
+⋅
+days_until_election
++
+𝛽
+3
+⋅
+sample_size
++
+𝛽
+4
+⋅
+methodology
++
+𝛽
+5
+⋅
+population
++
+𝛽
+6
+⋅
+state
++
+𝜖
+𝑖
+y 
+i
+​
+ =β 
+0
+​
+ +β 
+1
+​
+ ⋅candidate_name+β 
+2
+​
+ ⋅days_until_election+β 
+3
+​
+ ⋅sample_size+β 
+4
+​
+ ⋅methodology+β 
+5
+​
+ ⋅population+β 
+6
+​
+ ⋅state+ϵ 
+i
+​
+ 
+Where:
+
+𝛽
+0
+β 
+0
+​
+ : The intercept.
+𝛽
+1
+β 
+1
+​
+ : Captures the effect of being Kamala Harris relative to Donald Trump.
+𝛽
+2
+β 
+2
+​
+ : Measures the change in polling percentage per additional day until the election.
+𝛽
+3
+β 
+3
+​
+ : Represents the effect of sample size on polling percentage.
+𝛽
+4
+β 
+4
+​
+ , 
+𝛽
+5
+β 
+5
+​
+ , and 
+𝛽
+6
+β 
+6
+​
+ : Account for variations due to polling methodology, targeted population, and state-specific factors, respectively.
+𝜖
+𝑖
+ϵ 
+i
+​
+ : The error term.
+We implement the model using R's lm() function, leveraging the dplyr and tidyr packages for data manipulation. Model diagnostics were conducted to assess assumptions, including residual analysis and variance inflation factors (VIF) to check for multicollinearity.
+
+Model Justification
+We expect that polling percentages are influenced by several factors:
+
+Candidate Name: Different candidates may have varying levels of support irrespective of other factors.
+Days Until Election: As the election approaches, voter sentiments may shift, affecting polling percentages.
+Sample Size: Larger sample sizes generally provide more reliable estimates, potentially reducing variability in polling percentages.
+Methodology: The method of polling (e.g., live phone, online panel) can introduce different biases or levels of accuracy.
+Population Demographics: Demographic factors such as age, gender, race, education, and income can influence polling outcomes.
+State-Specific Factors: Political climate and historical voting patterns in each state may impact polling percentages.
+Results {#sec-results}
+Our analysis includes summary statistics, the linear regression model results, and Monte Carlo simulation outcomes to estimate the probability of each candidate winning the Electoral College.
+
+Summary Statistics
+Table 1 provides summary statistics for Donald Trump and Kamala Harris in polls that include both candidates.
+
+{r
+Copy code
+summary_stats <- polling_data_both %>%
+  group_by(candidate_name) %>%
+  summarise(
+    Mean = mean(pct_normalized, na.rm = TRUE),
+    `Standard Deviation` = sd(pct_normalized, na.rm = TRUE),
+    `Minimum` = min(pct_normalized, na.rm = TRUE),
+    `Maximum` = max(pct_normalized, na.rm = TRUE),
+    `Number of Polls` = n_distinct(poll_id),
+    .groups = 'drop'
+  )
+
+knitr::kable(
+  summary_stats,
+  caption = "Summary Statistics for Donald Trump and Kamala Harris in Polls Including Both Candidates",
+  col.names = c("Candidate", "Mean (%)", "Standard Deviation", "Minimum (%)", "Maximum (%)", "Number of Polls")
+)
+Table 1: Summary Statistics for Donald Trump and Kamala Harris in Polls Including Both Candidates
+
+Linear Regression Model
+Table 2 presents the results from the linear regression model predicting polling percentages based on various predictors.
+
+{r
+Copy code
+# Display the model summary using modelsummary
+modelsummary(
+  list("Linear Regression Model" = model),
+  statistic = "std.error",
+  fmt = 2,
+  title = "Linear Regression Model Predicting Polling Percentages",
+  gof_omit = "Adj|AIC|BIC|Log.Lik.|F|RMSE"
+)
+Table 2: Explanatory Models of Polling Percentages
+
+Interpretation: This table showcases the influence of various predictors on the polling percentages of Donald Trump and Kamala Harris. Coefficients for candidate_name represent the effect of each candidate relative to the reference category (Donald Trump). Significant positive or negative coefficients indicate a meaningful impact of the predictor on the polling percentages.
+
+Monte Carlo Simulation Results
+Figure 4 displays the probabilities of each candidate winning the Electoral College as estimated by Monte Carlo simulations.
+
+{r
+Copy code
+# Define Electoral College votes per state
+electoral_votes <- tibble(
+  state = c(state.name, "District of Columbia"),
+  electoral_votes = c(
+    9,  # Alabama
+    3,  # Alaska
+    11, # Arizona
+    6,  # Arkansas
+    55, # California
+    10, # Colorado
+    7,  # Connecticut
+    3,  # Delaware
+    3,  # District of Columbia
+    30, # Florida
+    16, # Georgia
+    4,  # Hawaii
+    4,  # Idaho
+    19, # Illinois
+    11, # Indiana
+    6,  # Iowa
+    6,  # Kansas
+    8,  # Kentucky
+    8,  # Louisiana
+    4,  # Maine
+    10, # Maryland
+    11, # Massachusetts
+    15, # Michigan
+    10, # Minnesota
+    6,  # Mississippi
+    10, # Missouri
+    4,  # Montana
+    5,  # Nebraska
+    6,  # Nevada
+    4,  # New Hampshire
+    14, # New Jersey
+    5,  # New Mexico
+    28, # New York
+    16, # North Carolina
+    3,  # North Dakota
+    17, # Ohio
+    7,  # Oklahoma
+    8,  # Oregon
+    19, # Pennsylvania
+    4,  # Rhode Island
+    9,  # South Carolina
+    3,  # South Dakota
+    11, # Tennessee
+    40, # Texas
+    6,  # Utah
+    3,  # Vermont
+    13, # Virginia
+    12, # Washington
+    4,  # West Virginia
+    10, # Wisconsin
+    3   # Wyoming
+  )
+)
+
+# Calculate average polling percentages per state for simulation
+state_poll_avg_sim <- polling_data_both %>%
+  group_by(state, candidate_name) %>%
+  summarise(
+    avg_pct = mean(pct_normalized, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  pivot_wider(names_from = candidate_name, values_from = avg_pct) %>%
+  rename(
+    trump_pct = `Donald Trump`,
+    harris_pct = `Kamala Harris`
+  )
+
+# Merge with electoral votes
+state_poll_evs_sim <- state_poll_avg_sim %>%
+  left_join(electoral_votes, by = "state")
+
+# Verify all states have electoral votes
+missing_evs_sim <- state_poll_evs_sim %>%
+  filter(is.na(electoral_votes)) %>%
+  pull(state) %>%
+  unique()
+
+if(length(missing_evs_sim) > 0){
+  cat("States with missing electoral votes:\n")
+  print(missing_evs_sim)
+  # Exclude these states from further analysis
+  state_poll_evs_sim <- state_poll_evs_sim %>%
+    filter(!state %in% missing_evs_sim)
+} else {
+  cat("All states have corresponding electoral votes.\n")
+}
+
+# Number of simulations
+n_simulations <- 1000
+
+# Initialize a dataframe to store simulation results
+simulation_results <- tibble(
+  simulation = integer(),
+  trump_evs = integer(),
+  harris_evs = integer(),
+  winner = character()
+)
+
+# Function to simulate one election
+simulate_one_election <- function(state_data){
+  # Simulate polling percentages with randomness (assuming normal distribution)
+  sim_trump <- rnorm(n = nrow(state_data), mean = state_data$trump_pct, sd = 2)
+  sim_harris <- rnorm(n = nrow(state_data), mean = state_data$harris_pct, sd = 2)
+  
+  # Ensure percentages are within 0-100
+  sim_trump <- pmax(sim_trump, 0)
+  sim_harris <- pmax(sim_harris, 0)
+  
+  # Determine winner in each state
+  state_winners <- ifelse(sim_harris > sim_trump, "Kamala Harris", "Donald Trump")
+  
+  # Handle ties randomly
+  ties <- which(sim_harris == sim_trump)
+  if(length(ties) > 0){
+    state_winners[ties] <- sample(c("Kamala Harris", "Donald Trump"), length(ties), replace = TRUE)
+  }
+  
+  # Sum electoral votes
+  trump_evs <- sum(state_data$electoral_votes[state_winners == "Donald Trump"])
+  harris_evs <- sum(state_data$electoral_votes[state_winners == "Kamala Harris"])
+  
+  # Determine overall winner
+  overall_winner <- ifelse(harris_evs > trump_evs, "Kamala Harris", "Donald Trump")
+  
+  return(tibble(trump_evs = trump_evs, harris_evs = harris_evs, winner = overall_winner))
+}
+
+# Run simulations
+for(i in 1:n_simulations){
+  sim <- simulate_one_election(state_poll_evs_sim)
+  simulation_results <- bind_rows(simulation_results, sim %>% mutate(simulation = i))
+  
+  # Optional: Print progress every 100 simulations
+  if(i %% 100 == 0){
+    cat("Completed", i, "simulations\n")
+  }
+}
+
+# Calculate win probabilities
+win_probabilities <- simulation_results %>%
+  group_by(winner) %>%
+  summarise(
+    probability = (n() / n_simulations) * 100,
+    avg_evs = mean(if_else(winner == "Donald Trump", trump_evs, harris_evs)),
+    median_evs = median(if_else(winner == "Donald Trump", trump_evs, harris_evs)),
+    .groups = 'drop'
+  )
+
+print("Monte Carlo Simulation Results:")
+print(win_probabilities)
+
+# Save simulation results
+write_csv(win_probabilities, "outputs/simulations/win_probabilities.csv")
+
+# Plot win probabilities
+simulation_prob_plot <- ggplot(win_probabilities, aes(x = reorder(winner, probability), y = probability, fill = winner)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(
+    title = "Monte Carlo Simulation: Probability of Winning the Electoral College",
+    x = "Candidate",
+    y = "Win Probability (%)",
+    fill = "Candidate"
+  ) +
+  theme_minimal()
+
+# Display the plot
+print(simulation_prob_plot)
+
+# Save simulation probability plot
+ggsave("plots/simulations/monte_carlo_win_probabilities.png", simulation_prob_plot, width = 10, height = 6)
+
+
+Figure 4: Monte Carlo Simulation: Probability of Winning the Electoral College
+
+Discussion {#sec-discussion}
+Interpretation of Results
+The summary statistics indicate that [insert interpretation based on Table 1]. The linear regression model (Table 2) reveals that [insert key findings from the model, e.g., the effect of candidate name, days until election, etc.]. These results suggest that [discuss how predictors influence polling percentages].
+
+The Monte Carlo simulations provide a probabilistic estimate of the Electoral College outcome. According to Figure 4, Kamala Harris has a [X]% probability of winning, while Donald Trump has a [Y]% probability. This indicates that [discuss the implications of these probabilities, potential uncertainties, and factors that could influence the final outcome].
+
+Policy Implications and Strategic Recommendations
+Based on the analysis, political campaigns should consider focusing resources on [identify key states or factors based on the choropleth map and model results]. By targeting these areas, campaigns can [explain how resources allocation can influence the electoral outcome].
+
+Limitations and Future Research
+While this analysis provides valuable insights, it is subject to several limitations. The accuracy of polling data can be influenced by factors such as sampling bias, response rates, and the methodologies employed. Future research should consider [suggest improvements, such as incorporating more dynamic models, real-time data updates, or expanding the set of predictors].
+
+Appendix {-}
+Model Details {#sec-model-details}
+Residual Analysis
+Assessing the residuals of the linear regression model to ensure that the assumptions of linearity, homoscedasticity, and normality are met.
+
+{r
+Copy code
+par(mfrow = c(1, 2))
+
+# Residuals vs Fitted
+plot(model, which = 1)
+
+# Normal Q-Q Plot
+plot(model, which = 2)
+
+par(mfrow = c(1,1))
+Variance Inflation Factors (VIF)
+Checking for multicollinearity among predictors.
+
+{r
+Copy code
+library(car)
+
+vif_values <- vif(model)
+print(vif_values)
+
+# Optionally, plot VIF values
+vif_plot <- data.frame(
+  Predictor = names(vif_values),
+  VIF = vif_values
+)
+
+ggplot(vif_plot, aes(x = reorder(Predictor, VIF), y = VIF)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Variance Inflation Factors (VIF) for Predictors",
+    x = "Predictor",
+    y = "VIF"
+  ) +
+  theme_minimal()
+
+Figure A1: Variance Inflation Factors (VIF) for Predictors
+
+Additional Diagnostics
+Provide any additional model diagnostics as needed, such as leverage plots or influence measures.
+
+{r
+Copy code
+# Leverage vs Cook's distance
+plot(model, which = 5)
+
+# Influence Plot
+library(car)
+influencePlot(model, main="Influence Plot", sub="Circle size is proportional to Cook's distance")
+References
+\bibliography{references.bib}
+
+markdown
+Copy code
+
+---
+
+## Step-by-Step Explanation
+
+1. **YAML Header:**
+   - Maintains your existing metadata, including title, authors, abstract, and bibliography.
+
+2. **Setup R Code Chunk:**
+   - Loads necessary libraries.
+   - Creates directories for storing plots and outputs to organize your results.
+   - Imports your cleaned polling data from the specified CSV file.
+
+3. **Introduction:**
+   - Provides context and motivation for your study.
+   - Outlines the structure of the paper.
+
+4. **Data Section:**
+   - **Overview:** Describes the dataset and its relevance.
+   - **Broader Context:** Explains the importance of polling data in predicting election outcomes.
+   - **Measurement:** Discusses how variables are measured and processed.
+   - **Variables Explained:**
+     - **Polling Percentage Distribution (Figure 1):** Visualizes the distribution of polling percentages for Trump and Harris using histograms.
+     - **Polling Percentages Over Time (Figure 2):** Shows how polling percentages have changed over time with a time series plot.
+     - **Electoral Votes by State (Figure 3):** Presents a choropleth map predicting state winners based on average polling data.
+
+5. **Model Section:**
+   - **Model Set-Up:** Prepares the data for modeling by selecting relevant variables and converting categorical variables to factors.
+   - **Linear Regression Model Specification:** Defines the linear regression model and its components.
+   - **Model Justification:** Explains the rationale behind selecting specific predictors.
+
+6. **Results Section:**
+   - **Summary Statistics (Table 1):** Provides descriptive statistics for Trump and Harris polling percentages.
+   - **Linear Regression Model (Table 2):** Presents the results of the linear regression analysis using the `modelsummary` package.
+   - **Monte Carlo Simulation Results (Figure 4):** Displays the probabilities of each candidate winning the Electoral College based on simulations.
+
+7. **Discussion Section:**
+   - Interprets the results from the summary statistics, linear regression model, and Monte Carlo simulations.
+   - Discusses policy implications, strategic recommendations, limitations, and suggestions for future research.
+
+8. **Appendix:**
+   - **Model Details:** Includes residual analysis, Variance Inflation Factors (VIF), and additional diagnostics to validate the linear regression model.
+
+9. **References:**
+   - Ensures that all citations are properly formatted and included in the bibliography.
+
+## Additional Recommendations
+
+- **Remove Placeholder Content:**
+  - Ensure that you delete or comment out the placeholder sections related to penguins and planes from your original `.qmd` file to avoid confusion and maintain focus on your actual analysis.
+
+- **Consistent Plot Styling:**
+  - Maintain a consistent theme and color scheme across all plots for a professional look. You've used `theme_minimal()` and specified colors where necessary.
+
+- **Reproducibility:**
+  - Set seeds for any random processes (e.g., handling ties in the choropleth map) to ensure reproducibility.
+  - Verify that all file paths are correct relative to your project directory structure.
+
+- **Model Interpretation:**
+  - In the **Discussion** section, provide detailed interpretations of your model coefficients, especially those related to the candidates of interest. Explain how each predictor influences polling percentages.
+
+- **Figure and Table Referencing:**
+  - Within your text, refer to figures and tables appropriately (e.g., "As shown in Figure 1,...", "Table 2 illustrates...").
+
+- **Bibliography Management:**
+  - Ensure that your `references.bib` file is up-to-date with all the sources you cite in your paper.
+
+- **Appendix Details:**
+  - Include all relevant model diagnostics in the appendix to provide transparency and support for your analysis.
+
+- **Final Review:**
+  - After integrating all sections, thoroughly review your paper to ensure coherence, clarity, and that all components are correctly linked and referenced.
+
+By following this updated structure and integrating the provided R code chunks, your Quarto paper will effectively present your analysis of the 2024 U.S. Presidential Election between Donald Trump and Kamala Harris. This setup ensures that your visualizations, models, and interpretations are seamlessly embedded within the narrative of your paper.
+
+If you encounter any specific issues or require further customization, feel free to ask!
+
+
+
+
+
+You’ve hit the Plus plan limit for o1-mini.
+Responses will use another model until your limit resets tomorrow after 3:40 PM.
+
+
+
+
+
+
+ChatGPT can make mistakes. Check important info.
